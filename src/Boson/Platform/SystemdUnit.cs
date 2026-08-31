@@ -8,6 +8,9 @@ namespace Boson.Platform;
 /// </summary>
 public sealed class SystemdUnit(IProcessRunner runner, string unitPath)
 {
+    /// <summary>The path the unit's ExecStart names; init puts the binary here.</summary>
+    public const string ExecPath = "/usr/local/bin/boson";
+
     public static string Content => EmbeddedResources.SystemdUnit;
 
     public string UnitPath { get; } = unitPath;
@@ -20,6 +23,30 @@ public sealed class SystemdUnit(IProcessRunner runner, string unitPath)
         Directory.CreateDirectory(Path.GetDirectoryName(UnitPath)!);
         File.WriteAllText(UnitPath, Content);
         return true;
+    }
+
+    /// <summary>
+    /// Copies the running binary to <see cref="ExecPath"/> when it isn't already
+    /// there, so the unit never points at a path holding no executable (systemd
+    /// 203/EXEC). Writes to a temp file and renames: replacing a binary that a
+    /// running daemon is executing fails otherwise.
+    /// Returns the path it installed from, or null when nothing was copied.
+    /// </summary>
+    public static string? InstallSelf()
+    {
+        var source = Environment.ProcessPath;
+        if (source is null || !OperatingSystem.IsLinux()) return null;
+        if (Path.GetFullPath(source) == ExecPath) return null;
+
+        Directory.CreateDirectory(Path.GetDirectoryName(ExecPath)!);
+        var staged = ExecPath + ".new";
+        File.Copy(source, staged, overwrite: true);
+        File.SetUnixFileMode(staged,
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+            UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+            UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        File.Move(staged, ExecPath, overwrite: true);
+        return source;
     }
 
     public void Remove()

@@ -107,11 +107,24 @@ public static class InitCommand
 
         Console.WriteLine("✓ directories in place");
 
-        // Step 4 — daemon: unit file, enable, restart; it migrates the DB at startup.
+        // Step 4 — daemon: install the binary where the unit expects it, then
+        // unit file, enable, restart; the daemon migrates the DB at startup.
+        try
+        {
+            if (SystemdUnit.InstallSelf() is { } source)
+                Console.WriteLine($"✓ installed {source} to {SystemdUnit.ExecPath}");
+        }
+        catch (Exception e)
+        {
+            Console.Error.WriteLine(
+                $"failed to install the binary to {SystemdUnit.ExecPath}: {e.Message}");
+            return ExitCodes.RuntimeFailure;
+        }
+
         var unit = new SystemdUnit(runner, paths.UnitFilePath);
 
         unit.WriteIfChanged();
-        
+
         foreach (var step in new[]
                  {
                      await unit.DaemonReloadAsync(ct),

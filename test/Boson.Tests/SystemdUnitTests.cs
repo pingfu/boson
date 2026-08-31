@@ -43,4 +43,11 @@ public class SystemdUnitTests
         Assert.False(File.Exists(unitPath));
         unit.Remove(); // idempotent
     }
+
+    [Fact]
+    public void ExecStart_matches_the_path_init_installs_to()
+    {
+        // A unit naming a path that holds no executable is systemd 203/EXEC.
+        Assert.Contains($"ExecStart={SystemdUnit.ExecPath} serve", SystemdUnit.Content);
+    }
 }
