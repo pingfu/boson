@@ -113,7 +113,7 @@ boson/
 │   │   └── ServeCommand.cs
 │   ├── Storage/
 │   │   ├── Db.cs                           # connection factory + WAL config
-│   │   ├── Migrator.cs                     # embedded .sql files, runs on every command
+│   │   ├── Migrator.cs                     # embedded .sql files, runs at daemon startup only (§8)
 │   │   ├── ProjectsRepository.cs
 │   │   ├── PlatformRepository.cs           # key/value: admin_hostname, binary_version, ...
 │   │   └── DeploysRepository.cs
@@ -125,7 +125,7 @@ boson/
 │   │   ├── InstallationTokenMinter.cs      # JWT + access_token exchange
 │   │   └── GithubClient.cs                 # 3 endpoints
 │   ├── Serve/
-│   │   ├── DaemonHost.cs                   # Kestrel bootstrap, startup recovery, shutdown
+│   │   ├── DaemonHost.cs                   # startup migration + recovery, Kestrel bootstrap, shutdown
 │   │   └── WebhookEndpoint.cs              # request validation pipeline (§14)
 │   ├── Deploy/
 │   │   ├── Deployer.cs                     # token + fetch + compose up
@@ -263,7 +263,7 @@ Exit codes:
 ```
 boson init <admin-hostname>
 ```
-Steps spelled out in §10. Preflight never installs anything — see §10. Idempotent: re-running it against an existing install rebuilds all derived state (§15), which makes it the recovery command too. The daemon port is fixed at 9000 (loopback only); preflight checks it is free.
+Steps spelled out in §10. Preflight never installs anything — see §10. Idempotent: re-running it against an existing install rebuilds all derived state (§15), which makes it the recovery command too. The daemon port is fixed at 9000 (loopback only).
 
 ### `boson add`
 ```
@@ -318,7 +318,7 @@ boson uninstall [--force] [--purge]
 ```
 Walks `init` back (§10). Refuses while non-archived projects exist unless `--force`. Default keeps all data; `--purge` destroys it after typed confirmation. Idempotent.
 
-Upgrading boson is not a command: replace `/usr/local/bin/boson` (same `curl` as install), `systemctl restart boson`. Migrations run on every invocation, so the next command or daemon start upgrades the schema.
+Upgrading boson is not a command: replace `/usr/local/bin/boson` (same `curl` as install), `systemctl restart boson`. The daemon migrates the schema at startup, and only there (§8); any command meeting a `schema_version` other than its own exits 2 naming the fix (restart the daemon, or upgrade the binary).
 
 ---
 
@@ -348,7 +348,7 @@ JsonDocument Build(IReadOnlyList<Project> projects, string adminHostname);
 ```
 
 ### `ManifestFlowOrchestrator`
-Runs inside the daemon (§11): owns the pending-setup entries (in-memory, keyed by state token, 15-minute TTL) and handles the `/_boson/setup-app/*` requests. On completion it inserts the project row, pushes the Caddy route and fetches the checkout; the CLI observes progress through the `/add/status` RPC.
+Runs inside the daemon (§11): owns the pending-setup entries (in-memory, keyed by state token, 15-minute TTL) and handles the `/_boson/setup-app/*` requests. On completion it inserts the project row, pushes the Caddy route and fetches the checkout under the project's lock (§16); the CLI observes progress through the `/add/status` RPC.
 
 ### `InstallationTokenMinter`
 ```csharp
@@ -511,9 +511,10 @@ System user, no shell; member of the `docker` group; owns `/var/lib/boson`, `/va
 
 ### Lifecycle
 
-- **Startup recovery** — before listening, mark any `deploys` rows at `status='running'` as `failed`, `error='daemon restart'`. Unconditional and sound *because* the daemon is the sole deploy executor: a `running` row without a live daemon task can only be a crash orphan. (The in-flight row exists to anchor the deploy id and log path; the table's real job is recording outcomes.)
+- **Startup migration** — before anything else, run the embedded migrations up to the binary's schema version. This is the only place migrations run; every other invocation only reads `schema_version` and refuses on mismatch (exit 2: DB older than the binary, "systemctl restart boson"; DB newer, "upgrade the binary"). The daemon itself refuses to start against a DB newer than its binary rather than touch the schema.
+- **Startup recovery** — after migration, before listening, mark any `deploys` rows at `status='running'` as `failed`, `error='daemon restart'`. Unconditional and sound *because* the daemon is the sole deploy executor: a `running` row without a live daemon task can only be a crash orphan. (The in-flight row exists to anchor the deploy id and log path; the table's real job is recording outcomes.)
 - **Graceful shutdown** — on SIGTERM: stop accepting requests, let an in-flight deploy finish (bounded by `TimeoutStopSec`), exit 0. A deploy that is cut off anyway is caught by startup recovery on the next start.
-- **Upgrade** — replace the binary, then `systemctl restart boson` before running anything else: migrations run on every invocation (§5), so a CLI command in the gap would migrate the schema under the still-running old daemon. Restart first and the single binary keeps daemon and CLI in step.
+- **Upgrade** — replace the binary, `systemctl restart boson`: the daemon migrates at startup. The restart-first ordering is enforced by the version gate, not discipline: a CLI command run in the gap finds `schema_version` behind its binary and exits 2 pointing at the restart, instead of migrating under the still-running old daemon.
 - **Crash** — systemd restarts within 2s. Requests in the gap get a 502 from Caddy: red in GitHub's Recent Deliveries (§12).
 - **Dev** — `boson serve` runs foreground on any OS; the unit file is a Linux-host concern only.
 
@@ -552,14 +553,14 @@ One service. The daemon is not in the stack — it is a host process (§8) that 
 
 ## 10. `boson init` — step by step
 
-1. **Preflight** — verify every host prerequisite; abort without touching anything if any is missing. Detailed below.
+1. **Preflight** — verify every software prerequisite; abort without touching anything if any is missing. Detailed below.
 2. **User**: create the `boson` system user (no shell, member of `docker` group).
 3. **Filesystem**: create `/var/lib/boson/`, `/var/lib/boson/locks/`, `/var/lib/boson/tmp/`, `/var/log/boson/deploys/`, `/srv/`. Directories 0700, files 0600, owned `boson:boson`. Trees that already exist are `chown -R`'d to the (possibly new) `boson` UID — the uninstall→init round trip deletes and recreates the user, so ownership of kept data must be re-established here.
-4. **DB**: open `/var/lib/boson/boson.db`, run all embedded migrations. Insert platform rows: `admin_hostname`, `installed_at`, `binary_version`.
-5. **Daemon**: write `/etc/systemd/system/boson.service` (§8), `systemctl daemon-reload`, `systemctl enable --now boson`. Poll `127.0.0.1:9000/_boson/health` until 200 (10s timeout).
+4. **Daemon**: write `/etc/systemd/system/boson.service` (§8), `systemctl daemon-reload`, `systemctl enable boson`, `systemctl restart boson` (a start on fresh installs; on a re-run it brings up the current binary). The daemon creates and migrates `/var/lib/boson/boson.db` at startup (§8): healthy means migrated. Poll `127.0.0.1:9000/_boson/health` until 200 (10s timeout).
+5. **Platform rows**: upsert `admin_hostname`, `installed_at`, `binary_version`.
 6. **Compose stack**: render `platform-compose.yaml` (Caddy only), `docker compose -f - up -d`.
 7. **Caddy bootstrap**: poll `127.0.0.1:2019/config/` until 200 (10s timeout), then `POST /load` the `CaddyConfigBuilder` output built from DB state. On a fresh install that is just the admin hostname routing `/_boson/*` to the daemon; on a re-run it includes every project route, which is what makes re-init the recovery command (§15).
-8. **Verify**: `curl https://<admin-hostname>/_boson/health` returns 200 within 90s (LE issuance time). On failure, surface `docker logs boson-caddy` and `journalctl -u boson` tails.
+8. **Hand off**: print `https://<admin-hostname>/_boson/health` for the operator to open. A 200 proves DNS, inbound reachability and TLS end to end (allow ~90s for first LE issuance). Networking is never preflighted (step 1 detail below), so a wrong A record, an occupied port 80/443 or blocked egress surfaces here; diagnose with `docker logs boson-caddy` and `journalctl -u boson`.
 
 Idempotent: re-running `init` against an existing install rebuilds all derived state — full Caddy config from the DB (every project, not just the admin hostname), the unit file, the user, directory ownership — which makes it the recovery command after restoring a DB backup or manual meddling (§15). Preflight runs again on every invocation.
 
@@ -567,7 +568,7 @@ Idempotent: re-running `init` against an existing install rebuilds all derived s
 
 **Boson installs no third-party software on the host.** No package manager is ever invoked, no `curl | sh`, no `apt`/`apk`/`yum`. Boson writes only to `/var/lib/boson`, `/var/log/boson`, `/srv`, `/usr/local/bin/boson` and `/etc/systemd/system/boson.service`, and creates one `boson` system user — all of them boson's own artifacts, all removed by `boson uninstall`. If a prerequisite is missing, boson reports exactly what is missing and stops.
 
-Installing packages would mean guessing the distro and package names and mutating a machine the operator controls, so boson reports and stops instead. That puts the weight on the preflight: it must never treat "I couldn't tell" as "fine".
+Installing packages would mean guessing the distro and package names and mutating a machine the operator controls, so boson reports and stops instead.
 
 | # | Requirement | Check | Failure class |
 |---|---|---|---|
@@ -576,18 +577,12 @@ Installing packages would mean guessing the distro and package names and mutatin
 | 3 | Running as root | euid 0 — init creates the `boson` user and the unit file | fatal |
 | 4 | **`git` on the host** | `git --version` exits 0 | fatal |
 | 5 | systemd is the init system | `/run/systemd/system` exists and `systemctl` on PATH | fatal |
-| 6 | A usable port-inspection tool | `ss` present, else `netstat`, else fall back to a direct bind attempt on :80/:443 | fatal if none available |
-| 7 | Ports 80 and 443 free | via #6 | fatal |
-| 8 | Admin hostname resolves | the hostname has at least one A/AAAA record | fatal |
-| 9 | Outbound HTTPS reachability | HEAD against `registry-1.docker.io`, `github.com`, `api.github.com` | fatal |
 
 Notes on the ones that aren't obvious:
 
 - **#4 `git`.** boson shells out to `git` on every deploy (§13). Discovering it missing at first-deploy time, *after* the user has created and installed a GitHub App, leaves an orphaned App to clean up by hand.
 - **#5 systemd.** WSL default distros, containers, and some minimal VMs aren't systemd hosts; the daemon can't be supervised there. Failing this loudly at preflight beats a cryptic `systemctl` error at step 5.
-- **#6, and why it is its own row.** The previous formulation, `ss -tln | grep -E ':80 |:443 '`, returns empty when `ss` itself is absent, and empty was read as "ports are free". A safety check that passes because its own tooling is missing is worse than no check at all. Absence of every probing method is a fatal preflight failure in its own right, not a silent pass.
-- **#8.** Resolution catches the typo and missing-record class. Whether the record points *here* cannot be decided locally: interface enumeration is wrong on any NAT'd host (the interface holds a private address), and an egress what's-my-IP probe adds a dependency and can differ from the ingress address anyway. When the resolved address matches no local interface, preflight prints both and continues; step 8's end-to-end HTTPS verify is the authoritative check.
-- **#9.** `init` pulls `caddy:2-alpine` from Docker Hub; `boson add` and every deploy talk to GitHub. On an egress-filtered host these fail mid-flow with errors that say nothing about which allowlist entry is missing. Probing first turns that into one clear sentence.
+Preflight checks software; networking state (ports 80/443 free, DNS records, inbound and outbound reachability) is environment, and local checks for it are unreliable: a port probe depends on whichever of `ss`/`netstat` happens to exist, interface enumeration is wrong on any NAT'd host, and probing the host's own public hostname needs NAT hairpin, which some providers break. Each networking failure instead surfaces where it occurs, with the real error attached: Caddy failing to bind 80/443 or to obtain a certificate (`docker logs boson-caddy`), an image pull or GitHub call failing with its own message. The end-to-end proof is step 8: the operator opens the health URL.
 
 **All checks run before any of them aborts.** Boson collects every failure and prints them together with the remediation for each, rather than failing on the first and making the user rediscover the next one on each re-run. Exit code 1 (user error), no stack trace.
 
@@ -600,8 +595,9 @@ $ boson init deploy.example.com
       Debian/Ubuntu:  apt-get install -y git
       Alpine:         apk add git
 
-  Port 443 is already bound (nginx, pid 812)
-      Caddy needs 80 and 443. Stop the conflicting service and re-run.
+  docker compose v2 plugin not found
+      Required to run Caddy and every project.
+      Debian/Ubuntu:  apt-get install -y docker-compose-plugin
 
 No changes were made.
 ```
@@ -618,7 +614,7 @@ Refuses while non-archived projects exist (lists them, points at `boson remove`)
 3. `userdel boson`.
 4. Keep `boson.db`, `/var/lib/boson`, `/var/log/boson`, `/srv`, and the Caddy volumes. Print what was kept.
 
-`uninstall` → `init` is a supported round trip: a later `init` finds the existing DB, re-runs migrations, recreates user + unit, re-chowns the kept trees to the new user's UID (init step 3), and rebuilds all derived state — all credentials intact. This makes reinstalling boson a safe recovery move.
+`uninstall` → `init` is a supported round trip: a later `init` finds the existing DB (migrated by the daemon at startup), recreates user + unit, re-chowns the kept trees to the new user's UID (init step 3), and rebuilds all derived state — all credentials intact. This makes reinstalling boson a safe recovery move.
 
 **`--purge` — destroy state too:**
 - Typed confirmation naming the project count and stating that App credentials cannot be re-issued by GitHub.
@@ -680,7 +676,9 @@ The daemon owns the whole flow; the CLI is an API call. The setup URL is public,
    │   [daemon, continuing in-process]
    │   ├─ Insert the complete project row (all credentials NOT NULL — §4)
    │   ├─ Push Caddy config: add the hostname route → 127.0.0.1:<port>
-   │   └─ Fetch the checkout (§6 step 4's git path; no compose up).
+   │   └─ Fetch the checkout (§6 step 4's git path; no compose up), under
+   │       the project's lock (§16). Lock held means a deploy is already
+   │       running the identical fetch, so skip it.
    │
    └─ CLI sees status=done (or failed): prints the summary and the next
        step: place /srv/<org>/<name>/.env if the compose needs env
@@ -745,10 +743,6 @@ Zero Caddy-config changes throughout — the route to `<hostname>` is unchanged;
 ### The HTTP response is not the deploy outcome
 
 **GitHub marks a delivery failed if the response takes longer than 10 seconds**, and does *not* automatically redeliver failures — while a real deploy takes minutes. So the daemon responds after validation only, before any deploy work starts. The status codes carry exactly two meanings: **403 = the signature didn't verify** (secret drift — an incident); **200/202 = the signature verified** — 200 when boson declines (ping, untracked branch, inactive project), 202 when a deploy was queued. A 202 never means *"a deploy succeeded"*: outcomes are read from `boson list` and the deploy log, not from GitHub's delivery log, and lock contention becomes `deploy_pending` rather than an error response.
-
-### NAT hairpin
-
-`init` step 8's verify curl calls the host's own public hostname *from* the host, which relies on NAT hairpin working for the host's own public address — normal on a plain Linux VPS, broken on some providers' networking. It runs at install time, so a broken hairpin surfaces early with a clear failure. **Verify on the real host during the marketcanary migration.**
 
 ### Failure modes
 
@@ -894,7 +888,7 @@ The recovery command is re-running `boson init <admin-hostname>`: idempotent, re
 
 | Operation | Lock |
 |---|---|
-| All deploys (webhook-triggered and CLI-requested) | Per-project non-blocking lock inside the daemon (`ProjectLocks`). Valid as plain process-local state because the daemon is the sole deploy executor (§8) — there is no second process to race. Manual contention → RPC 409 → CLI exit 3; webhook contention → `deploy_pending` + `Coalesced` (§6 step 9), GitHub already got its 202 (§14). |
+| All deploys (webhook-triggered and CLI-requested) | Per-project non-blocking lock inside the daemon (`ProjectLocks`). Valid as plain process-local state because the daemon is the sole deploy executor (§8) — there is no second process to race. Manual contention → RPC 409 → CLI exit 3; webhook contention → `deploy_pending` + `Coalesced` (§6 step 9), GitHub already got its 202 (§14). The add-flow's initial fetch (§11) takes the same lock, so a checkout has one writer at a time; when the lock is held it skips the fetch. |
 | Caddy admin updates | Mutex inside the daemon, which makes all steady-state config pushes (add/remove). The only other writer is `boson init` at bootstrap/recovery — not concurrent with normal operation. |
 | DB writes | SQLite WAL + `busy_timeout=5000` (daemon and CLI processes write concurrently). |
 | `boson init` / `uninstall` | Process-wide flock on `/var/lib/boson/locks/_platform.lock` — these contend CLI-vs-CLI across processes, so a filesystem lock is still the right tool there. |
@@ -978,11 +972,12 @@ Tag push → release. Artifact filenames stable across versions so `curl …/lat
 | Pure logic (`CaddyConfigBuilder`, `SystemdUnit`) | xUnit + Verify snapshots. Cover edge cases (config with 0/1/N projects). |
 | `WebhookEndpoint` (§14) | xUnit with a test server + tempfile SQLite. The pipeline in order: oversized body → 413; unknown/archived project → 404; bad or missing signature → 403 (and the compare is `FixedTimeEquals`); ping → 200; malformed payload → 400; untracked ref → 200 ignored; inactive + idle → 200; inactive + deploy in flight → 202 and `deploy_pending` set; valid push → 202 and `DeployAsync` invoked. |
 | `ProjectsRepository` etc. | xUnit against an in-memory or tempfile SQLite. |
+| Schema version gate (§8) | xUnit + tempfile SQLite. DB behind the binary: a command exits 2 pointing at `systemctl restart boson`; DB ahead: exit 2 pointing at a binary upgrade; the daemon refuses to start against a DB ahead of its binary rather than migrate. |
 | `ManifestFlowOrchestrator` | xUnit with `WebApplicationFactory`-style test server. Stub GitHub calls via `HttpMessageHandler`. |
 | `Deployer` | Integration test with a fake compose project (a single nginx container) on Linux runners only. Gated behind `BOSON_INTEGRATION=1` env. |
 | Deploy coalescing (§6 step 9) | xUnit against `ProjectLocks` + tempfile SQLite, no docker. Cases: contention sets `deploy_pending` and returns `Coalesced`; drain loops exactly once; 3-pass bound holds under a synthetic flood and leaves `deploy_pending` set. |
 | `GitCli` init + fetch/reset (§13) | Integration test against a throwaway GitHub repo: first call initialises an empty directory, second call after a new push lands the new tip; force-push on the branch is tolerated; an untracked file dropped in the checkout survives both. Gated behind `BOSON_INTEGRATION=1`. |
-| `init` preflight (§10) | xUnit with a stubbed `ProcessRunner`. The cases that matter are the negative ones: `git` absent is fatal; *all* of `ss`/`netstat`/bind unavailable is fatal rather than a pass; multiple simultaneous failures are all reported in one run, not just the first. |
+| `init` preflight (§10) | xUnit with a stubbed `ProcessRunner`. The cases that matter are the negative ones: `git` absent is fatal; multiple simultaneous failures are all reported in one run, not just the first. |
 | Caddy `--resume` (§7) | Integration test: `boson init`, POST a config, `docker restart boson-caddy`, assert the admin hostname still answers. This is the regression test for the reboot failure mode — it fails on the stock image command. Gated behind `BOSON_INTEGRATION=1`. |
 | End-to-end | Manual on a throwaway VPS initially; automate later. Reboot the VPS as part of it — a host restart is the one path with no boson process involved to paper over a mistake. |
 

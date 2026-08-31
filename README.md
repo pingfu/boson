@@ -13,9 +13,9 @@ curl -fL https://github.com/pingfu/boson/releases/latest/download/boson-linux-x6
 boson init deploy.example.com
 ```
 
-`init` verifies the requirements (Docker with the compose v2 plugin, `git`, systemd, root, ports 80/443 free, the admin hostname's A record, outbound HTTPS to Docker Hub and GitHub), then installs the platform. TLS certificates are provisioned and renewed automatically, here and for each project hostname you add. Done when `https://deploy.example.com/_boson/health` returns 200.
+`init` verifies the software requirements (Docker with the compose v2 plugin, `git`, systemd, root), then installs the platform. TLS certificates are provisioned and renewed automatically, here and for each project hostname you add. Confirm the install by opening `https://deploy.example.com/_boson/health`: a 200 proves DNS, reachability and TLS end to end.
 
-The admin hostname is the platform's own address, where GitHub delivers webhooks. It needs an A record pointing at the host, as does each project hostname.
+The admin hostname is the platform's own address, where GitHub delivers webhooks. It needs an A record pointing at the host, as does each project hostname. Ports 80 and 443 must be free on the host and reachable from the internet.
 
 ## Prepare your project
 
