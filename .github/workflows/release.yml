@@ -51,6 +51,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Only the binary is published, so anything else here — a native .so
+          # that failed to bundle, for one — would be silently dropped.
+          count=$(find publish -type f | wc -l)
+          if [ "$count" -ne 1 ]; then
+            echo "expected exactly one published file, found $count:"
+            find publish -type f
+            exit 1
+          fi
           src=publish/boson
           [ -f "$src" ] || src=publish/boson.exe
           mv "$src" "publish/${{ matrix.asset }}"

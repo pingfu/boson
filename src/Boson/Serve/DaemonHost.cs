@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System.Runtime.InteropServices;
 using Serilog;
 using Serilog.Formatting.Compact;
 using ILogger = Microsoft.Extensions.Logging.ILogger;
@@ -87,9 +88,24 @@ public sealed class DaemonHost(BosonPaths paths, int port)
             "boson {Version} listening on 127.0.0.1:{Port} and {Socket} (schema v{Schema}, {Recovered} orphaned deploys recovered)",
             VersionInfo.Version, port, paths.SocketPath, Migrator.BinarySchemaVersion, recovered);
 
+        // systemd stops the daemon with SIGTERM. Without handling it here the
+        // process ignores the signal and systemd waits out TimeoutStopSec (600s)
+        // before SIGKILL, which blocks `systemctl restart` — and so `boson init`.
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, ctx =>
+        {
+            ctx.Cancel = true;
+            stopping.Cancel();
+        });
+        using var sigint = PosixSignalRegistration.Create(PosixSignal.SIGINT, ctx =>
+        {
+            ctx.Cancel = true;
+            stopping.Cancel();
+        });
+
         try
         {
-            await Task.Delay(Timeout.Infinite, ct);
+            await Task.Delay(Timeout.Infinite, stopping.Token);
         }
         catch (OperationCanceledException)
         {
