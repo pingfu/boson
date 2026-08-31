@@ -1,0 +1,19 @@
+[Unit]
+Description=boson daemon
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=boson
+Group=boson
+ExecStart=/usr/local/bin/boson serve
+WorkingDirectory=/var/lib/boson
+Environment=DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/lib/boson/.net
+NoNewPrivileges=true
+Restart=always
+RestartSec=2
+TimeoutStopSec=600
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+name: boson
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: boson-caddy
+    restart: unless-stopped
+    network_mode: host
+    command: ["caddy", "run", "--resume"]
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:

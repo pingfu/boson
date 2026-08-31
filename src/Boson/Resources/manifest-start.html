@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>boson &mdash; create GitHub App</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1rem; }
+    button { font-size: 1.1rem; padding: 0.6rem 1.4rem; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>boson</h1>
+  <p>Creating a GitHub App for this project. You will be redirected to GitHub to confirm.</p>
+  <form id="manifest-form" action="https://github.com/settings/apps/new?state={{STATE}}" method="post">
+    <input type="hidden" name="manifest" id="manifest">
+    <button type="submit">Create GitHub App</button>
+  </form>
+  <script>
+    document.getElementById("manifest").value = JSON.stringify({{MANIFEST_JSON}});
+    document.getElementById("manifest-form").submit();
+  </script>
+</body>
+</html>
