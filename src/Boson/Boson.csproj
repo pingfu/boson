@@ -8,7 +8,10 @@
     <AssemblyName>boson</AssemblyName>
     <RootNamespace>Boson</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <PublishTrimmed>false</PublishTrimmed>
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>partial</TrimMode>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <Version Condition="'$(Version)' == ''">0.1.0</Version>
   </PropertyGroup>
 
