@@ -28,6 +28,16 @@ public class CaddyConfigBuilderTests
         var expected = JsonNode.Parse("""
         {
           "apps": {
+            "tls": {
+              "automation": {
+                "policies": [
+                  {
+                    "subjects": ["boson.enclave"],
+                    "issuers": [{"module": "acme"}, {"module": "internal"}]
+                  }
+                ]
+              }
+            },
             "http": {
               "servers": {
                 "main": {
@@ -98,21 +108,29 @@ public class CaddyConfigBuilderTests
     }
 
     [Fact]
-    public void Private_admin_hostname_gets_an_internal_issuer()
+    public void Control_hostname_falls_back_from_acme_to_caddys_own_ca()
     {
-        using var doc = _builder.Build([TestProjects.New()], "boson.enclave", adminTlsInternal: true);
-        var config = JsonNode.Parse(doc.RootElement.GetRawText())!;
+        // Verified against caddy:2-alpine: a private name is rejected by the CA
+        // ("does not end with a valid public suffix") and the next issuer in the
+        // list produces the certificate. Order is the whole mechanism.
+        var policy = Build(TestProjects.New())["apps"]!["tls"]!["automation"]!["policies"]![0]!;
 
-        var policy = config["apps"]!["tls"]!["automation"]!["policies"]![0]!;
         Assert.Equal("boson.enclave", policy["subjects"]![0]!.GetValue<string>());
-        Assert.Equal("internal", policy["issuers"]![0]!["module"]!.GetValue<string>());
+        Assert.Equal("acme", policy["issuers"]![0]!["module"]!.GetValue<string>());
+        Assert.Equal("internal", policy["issuers"]![1]!["module"]!.GetValue<string>());
     }
 
     [Fact]
-    public void Public_admin_hostname_keeps_the_default_acme_issuer()
+    public void Project_hostnames_get_no_internal_fallback()
     {
-        // No tls app at all means Caddy's own automatic HTTPS defaults apply.
-        Assert.Null(Build(TestProjects.New())["apps"]!["tls"]);
+        // A public site must fail loudly rather than quietly serve an untrusted
+        // certificate, so only the control hostname carries a policy.
+        var policies = Build(TestProjects.New(hostname: "marketcanary.co"))
+            ["apps"]!["tls"]!["automation"]!["policies"]!.AsArray();
+
+        var subjects = policies.SelectMany(p => p!["subjects"]!.AsArray())
+            .Select(s => s!.GetValue<string>());
+        Assert.DoesNotContain("marketcanary.co", subjects);
     }
 
     [Fact]

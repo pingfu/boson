@@ -18,8 +18,7 @@ public sealed class CaddyConfigBuilder
     /// <summary>The only path boson reserves on a project's hostname.</summary>
     public const string WebhookPathPrefix = "/_boson/webhook/";
 
-    public JsonDocument Build(
-        IReadOnlyList<Project> projects, string adminHostname, bool adminTlsInternal = false)
+    public JsonDocument Build(IReadOnlyList<Project> projects, string adminHostname)
     {
         var routes = new JsonArray
         {
@@ -69,25 +68,30 @@ public sealed class CaddyConfigBuilder
             }),
         });
 
-        var apps = new JsonObject();
-
-        // A private control hostname (boson.enclave and the like) can't pass an
-        // ACME challenge, so Caddy issues its certificate from its own CA.
-        // Project hostnames are public and keep the default ACME issuer.
-        if (adminTlsInternal)
+        var apps = new JsonObject
         {
-            apps["tls"] = new JsonObject
+            // Issuers are tried in order, so the control hostname needs no
+            // configuration either way: a public name gets a real ACME
+            // certificate, and a private one (boson.enclave and the like) is
+            // rejected by the CA in milliseconds — "does not end with a valid
+            // public suffix" — and falls through to Caddy's own CA.
+            // Scoped to this subject deliberately: a public project hostname
+            // must fail loudly rather than quietly serve an untrusted
+            // certificate after a transient ACME failure.
+            ["tls"] = new JsonObject
             {
                 ["automation"] = new JsonObject
                 {
                     ["policies"] = new JsonArray(new JsonObject
                     {
                         ["subjects"] = new JsonArray(adminHostname),
-                        ["issuers"] = new JsonArray(new JsonObject { ["module"] = "internal" }),
+                        ["issuers"] = new JsonArray(
+                            new JsonObject { ["module"] = "acme" },
+                            new JsonObject { ["module"] = "internal" }),
                     }),
                 },
-            };
-        }
+            },
+        };
 
         apps["http"] = new JsonObject
         {

@@ -11,8 +11,6 @@ public interface IPlatformRepository
 public sealed class PlatformRepository(Db db) : IPlatformRepository
 {
     public const string AdminHostname = "admin_hostname";
-    /// <summary>"1" when the control hostname is private and Caddy must self-issue its certificate.</summary>
-    public const string AdminTlsInternal = "admin_tls_internal";
     public const string InstalledAt = "installed_at";
     public const string BinaryVersion = "binary_version";
 

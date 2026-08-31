@@ -17,25 +17,16 @@ public static class InitCommand
                           "private, e.g. boson.enclave",
         };
 
-        var internalTlsOpt = new Option<bool>("--internal-tls")
-        {
-            Description = "The control hostname is private (not publicly resolvable), so Caddy " +
-                          "issues its certificate from its own CA instead of Let's Encrypt",
-        };
-
         var cmd = new Command("init",
             "Install the platform; re-run rebuilds all derived state (recovery)");
 
         cmd.Arguments.Add(hostArg);
-        cmd.Options.Add(internalTlsOpt);
-        cmd.SetAction((parseResult, ct) => RunAsync(
-            parseResult.GetValue(hostArg)!, parseResult.GetValue(internalTlsOpt), ct));
+        cmd.SetAction((parseResult, ct) => RunAsync(parseResult.GetValue(hostArg)!, ct));
 
         return cmd;
     }
 
-    public static async Task<int> RunAsync(
-        string adminHostname, bool internalTls, CancellationToken ct)
+    public static async Task<int> RunAsync(string adminHostname, CancellationToken ct)
     {
         adminHostname = adminHostname.Trim().TrimEnd('.').ToLowerInvariant();
 
@@ -163,7 +154,6 @@ public static class InitCommand
         var platformRepo = new PlatformRepository(db);
         
         platformRepo.Set(PlatformRepository.AdminHostname, adminHostname);
-        platformRepo.Set(PlatformRepository.AdminTlsInternal, internalTls ? "1" : "0");
         platformRepo.Set(PlatformRepository.InstalledAt, DateTimeOffset.UtcNow.ToString("O"));
         platformRepo.Set(PlatformRepository.BinaryVersion, VersionInfo.Version);
         
@@ -194,8 +184,7 @@ public static class InitCommand
 
         var projectsRepo = new ProjectsRepository(db);
         
-        using (var cfg = new CaddyConfigBuilder()
-                   .Build(projectsRepo.ListActive(), adminHostname, internalTls))
+        using (var cfg = new CaddyConfigBuilder().Build(projectsRepo.ListActive(), adminHostname))
             await caddyClient.LoadConfigAsync(cfg, ct);
         
         await DbOwnership.ChownToBosonAsync(runner, paths.DbPath);
@@ -205,11 +194,10 @@ public static class InitCommand
         // Step 8 — hand off; a 200 here proves DNS, reachability and TLS end to end.
         Console.WriteLine();
         Console.WriteLine($"Platform is up. Open:  https://{adminHostname}/_boson/health");
-        Console.WriteLine(internalTls
-            ? "(certificate is issued by Caddy's own CA — trust it once, or expect a browser warning; " +
-              "diagnose with docker logs boson-caddy and journalctl -u boson)"
-            : "(allow ~90s for the first Let's Encrypt issuance; " +
-              "diagnose with docker logs boson-caddy and journalctl -u boson)");
+        Console.WriteLine(
+            "(a public hostname gets a Let's Encrypt certificate — allow ~90s for first issuance; " +
+            "a private one is refused by the CA and Caddy issues its own, so expect a browser " +
+            "warning until you trust it. Diagnose with docker logs boson-caddy and journalctl -u boson)");
 
         return ExitCodes.Success;
     }
