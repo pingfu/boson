@@ -26,10 +26,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - { os: ubuntu-latest,  rid: linux-x64,   artifact: boson-linux-x64 }
-          - { os: ubuntu-latest,  rid: linux-arm64, artifact: boson-linux-arm64 }
-          - { os: macos-latest,   rid: osx-arm64,   artifact: boson-osx-arm64 }
-          - { os: windows-latest, rid: win-x64,     artifact: boson-win-x64.exe }
+          - { os: ubuntu-latest,  rid: linux-x64,   asset: boson-linux-x64 }
+          - { os: ubuntu-latest,  rid: linux-arm64, asset: boson-linux-arm64 }
+          - { os: macos-latest,   rid: osx-arm64,   asset: boson-osx-arm64 }
+          - { os: windows-latest, rid: win-x64,     asset: boson-win-x64.exe }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -40,14 +40,27 @@ jobs:
           dotnet publish src/Boson/Boson.csproj
           -c Release -r ${{ matrix.rid }}
           --self-contained true
-          /p:PublishSingleFile=true
-          /p:DebugType=embedded
-          /p:Version=${{ env.VERSION }}
+          -p:PublishSingleFile=true
+          -p:DebugType=embedded
+          -p:Version=${{ env.VERSION }}
           -o publish
+
+      # dotnet always names the output `boson`/`boson.exe`. Renaming per RID is
+      # what keeps the four assets from colliding on basename at release time.
+      - name: Name the binary for its platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          src=publish/boson
+          [ -f "$src" ] || src=publish/boson.exe
+          mv "$src" "publish/${{ matrix.asset }}"
+          ls -l "publish/${{ matrix.asset }}"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: publish/boson*
+          name: ${{ matrix.asset }}
+          path: publish/${{ matrix.asset }}
+          if-no-files-found: error
 
   release:
     needs: build
@@ -56,9 +69,24 @@ jobs:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      # Guards the collision that shipped an arm64 build as the x64 asset.
+      - name: Verify each asset is the architecture its name claims
+        run: |
+          set -euo pipefail
+          ls -l assets
+          file assets/boson-linux-x64   | grep -q 'ELF 64-bit.*x86-64'
+          file assets/boson-linux-arm64 | grep -q 'ELF 64-bit.*aarch64'
+          file assets/boson-osx-arm64   | grep -q 'Mach-O.*arm64'
+          file assets/boson-win-x64.exe | grep -q 'PE32+'
+          echo "all four assets match their names"
+
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
           target_commitish: ${{ github.sha }}
-          files: '**/boson*'
+          files: assets/boson-*
           generate_release_notes: true
