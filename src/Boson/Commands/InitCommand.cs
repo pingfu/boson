@@ -125,16 +125,23 @@ public static class InitCommand
 
         unit.WriteIfChanged();
 
-        foreach (var step in new[]
+        // Each step gates the next; a failed daemon-reload must not be followed
+        // by an enable and a restart.
+        foreach (var step in new Func<Task<ProcessResult>>[]
                  {
-                     await unit.DaemonReloadAsync(ct),
-                     await unit.EnableAsync(ct),
-                     await unit.RestartAsync(ct),
+                     () => unit.DaemonReloadAsync(ct),
+                     () => unit.EnableAsync(ct),
+                     // Ignored deliberately: this is the only one that fails in
+                     // the healthy case (nothing to reset).
+                     async () => { await unit.ResetFailedAsync(ct); return new ProcessResult(0, "", ""); },
+                     () => unit.RestartAsync(ct),
                  })
         {
-            if (!step.Ok)
+            var result = await step();
+
+            if (!result.Ok)
             {
-                Console.Error.WriteLine($"systemctl failed: {step.StdErr.Trim()}");
+                Console.Error.WriteLine($"systemctl failed: {result.StdErr.Trim()}");
                 return ExitCodes.RuntimeFailure;
             }
         }

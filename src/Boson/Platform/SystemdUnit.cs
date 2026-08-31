@@ -63,6 +63,14 @@ public sealed class SystemdUnit(IProcessRunner runner, string unitPath)
     public Task<ProcessResult> RestartAsync(CancellationToken ct = default) =>
         runner.RunAsync("systemctl", ["restart", "boson"], ct: ct);
 
+    /// <summary>
+    /// Clears a start-limit wedge. After repeated fast failures systemd refuses
+    /// to start the unit at all ("start request repeated too quickly"), which
+    /// would make init unable to recover the very state it exists to repair.
+    /// </summary>
+    public Task<ProcessResult> ResetFailedAsync(CancellationToken ct = default) =>
+        runner.RunAsync("systemctl", ["reset-failed", "boson"], ct: ct);
+
     public Task<ProcessResult> DisableNowAsync(CancellationToken ct = default) =>
         runner.RunAsync("systemctl", ["disable", "--now", "boson"], ct: ct);
 }
