@@ -6,14 +6,20 @@ namespace Boson.Caddy;
 
 /// <summary>
 /// Synthesises the whole structured-JSON config from DB state (spec §7).
-/// Route order: admin /_boson/* → daemon, then per project its www redirect
-/// and its proxy route, then the admin catch-all 404.
+/// Route order: control /_boson/* → daemon, then per project its www redirect,
+/// its reserved webhook path and its proxy route, then the control catch-all
+/// 404. The control hostname can be private, because GitHub never reaches it;
+/// each project's own public hostname carries that project's webhook.
 /// </summary>
 public sealed class CaddyConfigBuilder
 {
     public const int DaemonPort = 9000;
 
-    public JsonDocument Build(IReadOnlyList<Project> projects, string adminHostname)
+    /// <summary>The only path boson reserves on a project's hostname.</summary>
+    public const string WebhookPathPrefix = "/_boson/webhook/";
+
+    public JsonDocument Build(
+        IReadOnlyList<Project> projects, string adminHostname, bool adminTlsInternal = false)
     {
         var routes = new JsonArray
         {
@@ -34,6 +40,17 @@ public sealed class CaddyConfigBuilder
             if (!p.Hostname.StartsWith("www.", StringComparison.Ordinal))
                 routes.Add(RedirectRoute($"www.{p.Hostname}", p.Hostname));
 
+            // GitHub delivers to the project's own public hostname, so the
+            // control plane never has to be reachable from the internet. This
+            // route must precede the project's catch-all proxy route below.
+            routes.Add(ProxyRoute(
+                match: new JsonObject
+                {
+                    ["host"] = new JsonArray(p.Hostname),
+                    ["path"] = new JsonArray($"{WebhookPathPrefix}*"),
+                },
+                dial: $"127.0.0.1:{DaemonPort}"));
+
             routes.Add(ProxyRoute(
                 match: new JsonObject { ["host"] = new JsonArray(p.Hostname) },
                 dial: $"127.0.0.1:{p.UpstreamPort}"));
@@ -52,25 +69,44 @@ public sealed class CaddyConfigBuilder
             }),
         });
 
-        var doc = new JsonObject
+        var apps = new JsonObject();
+
+        // A private control hostname (boson.enclave and the like) can't pass an
+        // ACME challenge, so Caddy issues its certificate from its own CA.
+        // Project hostnames are public and keep the default ACME issuer.
+        if (adminTlsInternal)
         {
-            ["apps"] = new JsonObject
+            apps["tls"] = new JsonObject
             {
-                ["http"] = new JsonObject
+                ["automation"] = new JsonObject
                 {
-                    ["servers"] = new JsonObject
+                    ["policies"] = new JsonArray(new JsonObject
                     {
-                        ["main"] = new JsonObject
-                        {
-                            ["listen"] = new JsonArray(":80", ":443"),
-                            ["routes"] = routes,
-                            // Access logging: Caddy writes to its own stdout,
-                            // captured by `docker logs boson-caddy`.
-                            ["logs"] = new JsonObject(),
-                        },
-                    },
+                        ["subjects"] = new JsonArray(adminHostname),
+                        ["issuers"] = new JsonArray(new JsonObject { ["module"] = "internal" }),
+                    }),
+                },
+            };
+        }
+
+        apps["http"] = new JsonObject
+        {
+            ["servers"] = new JsonObject
+            {
+                ["main"] = new JsonObject
+                {
+                    ["listen"] = new JsonArray(":80", ":443"),
+                    ["routes"] = routes,
+                    // Access logging: Caddy writes to its own stdout,
+                    // captured by `docker logs boson-caddy`.
+                    ["logs"] = new JsonObject(),
                 },
             },
+        };
+
+        var doc = new JsonObject
+        {
+            ["apps"] = apps,
             ["logging"] = new JsonObject
             {
                 ["logs"] = new JsonObject

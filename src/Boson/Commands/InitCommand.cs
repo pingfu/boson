@@ -10,27 +10,38 @@ public static class InitCommand
 {
     public static Command Create()
     {
-        var hostArg = new Argument<string>("admin-hostname")
+        var hostArg = new Argument<string>("control-hostname")
         {
-            Description = "Public hostname for the platform's /_boson/* endpoints, e.g. deploy.example.com",
+            Description = "Hostname for boson's own control plane: /_boson/health and the " +
+                          "browser-driven App setup flow. Never reached by GitHub, so it can be " +
+                          "private, e.g. boson.enclave",
+        };
+
+        var internalTlsOpt = new Option<bool>("--internal-tls")
+        {
+            Description = "The control hostname is private (not publicly resolvable), so Caddy " +
+                          "issues its certificate from its own CA instead of Let's Encrypt",
         };
 
         var cmd = new Command("init",
             "Install the platform; re-run rebuilds all derived state (recovery)");
-        
+
         cmd.Arguments.Add(hostArg);
-        cmd.SetAction((parseResult, ct) => RunAsync(parseResult.GetValue(hostArg)!, ct));
-        
+        cmd.Options.Add(internalTlsOpt);
+        cmd.SetAction((parseResult, ct) => RunAsync(
+            parseResult.GetValue(hostArg)!, parseResult.GetValue(internalTlsOpt), ct));
+
         return cmd;
     }
 
-    public static async Task<int> RunAsync(string adminHostname, CancellationToken ct)
+    public static async Task<int> RunAsync(
+        string adminHostname, bool internalTls, CancellationToken ct)
     {
         adminHostname = adminHostname.Trim().TrimEnd('.').ToLowerInvariant();
 
         if (string.IsNullOrWhiteSpace(adminHostname) || !adminHostname.Contains('.'))
         {
-            Console.Error.WriteLine($"invalid admin hostname: {adminHostname}");
+            Console.Error.WriteLine($"invalid control hostname: {adminHostname}");
             return ExitCodes.UserError;
         }
 
@@ -132,6 +143,7 @@ public static class InitCommand
         var platformRepo = new PlatformRepository(db);
         
         platformRepo.Set(PlatformRepository.AdminHostname, adminHostname);
+        platformRepo.Set(PlatformRepository.AdminTlsInternal, internalTls ? "1" : "0");
         platformRepo.Set(PlatformRepository.InstalledAt, DateTimeOffset.UtcNow.ToString("O"));
         platformRepo.Set(PlatformRepository.BinaryVersion, VersionInfo.Version);
         
@@ -162,7 +174,8 @@ public static class InitCommand
 
         var projectsRepo = new ProjectsRepository(db);
         
-        using (var cfg = new CaddyConfigBuilder().Build(projectsRepo.ListActive(), adminHostname))
+        using (var cfg = new CaddyConfigBuilder()
+                   .Build(projectsRepo.ListActive(), adminHostname, internalTls))
             await caddyClient.LoadConfigAsync(cfg, ct);
         
         await DbOwnership.ChownToBosonAsync(runner, paths.DbPath);
@@ -172,7 +185,11 @@ public static class InitCommand
         // Step 8 — hand off; a 200 here proves DNS, reachability and TLS end to end.
         Console.WriteLine();
         Console.WriteLine($"Platform is up. Open:  https://{adminHostname}/_boson/health");
-        Console.WriteLine("(allow ~90s for the first Let's Encrypt issuance; diagnose with docker logs boson-caddy and journalctl -u boson)");
+        Console.WriteLine(internalTls
+            ? "(certificate is issued by Caddy's own CA — trust it once, or expect a browser warning; " +
+              "diagnose with docker logs boson-caddy and journalctl -u boson)"
+            : "(allow ~90s for the first Let's Encrypt issuance; " +
+              "diagnose with docker logs boson-caddy and journalctl -u boson)");
 
         return ExitCodes.Success;
     }

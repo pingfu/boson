@@ -139,9 +139,12 @@ public sealed class ManifestFlowOrchestrator(
             ["url"] = $"https://github.com/{entry.Repo}",
             ["redirect_url"] = $"https://{admin}/_boson/setup-app/callback",
             ["setup_url"] = $"https://{admin}/_boson/setup-app/installed",
+            // Deliveries land on the project's own public hostname; only the
+            // browser-driven redirects use the (possibly private) admin name.
             ["hook_attributes"] = new JsonObject
             {
-                ["url"] = $"https://{admin}/_boson/webhook/{entry.Repo}",
+                ["url"] =
+                    $"https://{entry.Hostname}{CaddyConfigBuilder.WebhookPathPrefix}{entry.Repo}",
             },
             ["public"] = false,
             ["default_events"] = new JsonArray("push"),

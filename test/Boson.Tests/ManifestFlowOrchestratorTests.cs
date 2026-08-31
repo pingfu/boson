@@ -120,7 +120,10 @@ public sealed class ManifestFlowOrchestratorTests : IDisposable
         var html = _orchestrator.RenderStartPage(start.Token)!;
 
         Assert.Contains("boson-site", html);
-        Assert.Contains("https://deploy.example.com/_boson/webhook/acme/site", html);
+        // GitHub delivers to the project's own public hostname; only the
+        // browser-driven redirects use the admin name.
+        Assert.Contains("https://site.example.com/_boson/webhook/acme/site", html);
+        Assert.DoesNotContain("https://deploy.example.com/_boson/webhook", html);
         Assert.Contains("https://deploy.example.com/_boson/setup-app/callback", html);
         Assert.Contains("https://deploy.example.com/_boson/setup-app/installed", html);
         Assert.Contains($"state={start.Token}", html);
