@@ -8,7 +8,7 @@ Boson is a single-binary CLI that turns one Linux host into a multi-project depl
 - **The boson daemon** — host process; verifies pushes from GitHub and runs deploys
 - **One or more containers per project** — defined by each project's own `docker-compose.yml`
 
-`boson add` walks the GitHub App manifest flow, captures the App's credentials, configures Caddy, clones the repo, and runs the first deploy. A project whose compose needs env vars fails that first deploy with a pointer to where they go; `boson deploy` retries. Subsequent pushes flow through the webhook receiver and trigger a rebuild + restart.
+`boson add` walks the GitHub App manifest flow, captures the App's credentials, configures Caddy, and fetches the checkout. Deploying is the admin's next step: place `/srv/<org>/<name>/.env` if the compose needs one (repos ship a template) and run `boson deploy`; its first success turns on push-to-deploy. Subsequent pushes flow through the webhook receiver and trigger a rebuild + restart.
 
 **A project's internals are a black box to boson** — whatever the project's `docker-compose.yml` says, boson runs `docker compose up -d --build` from the repo root and lets the project handle the rest. Boson only needs three things per project: the repo, a public hostname, and the port Caddy should route that hostname to.
 
@@ -37,7 +37,7 @@ Boson is a single-binary CLI that turns one Linux host into a multi-project depl
                       port 8080)       port 3000)                     executor of deploys)
 ```
 
-Caddy runs as a container. The boson daemon is the same binary as the CLI, run as `boson serve` under systemd (unit and `boson` system user created by `boson init`, removed by `boson uninstall`). CLI invocations remain one-shot processes; the daemon exists because something must hold a socket open for GitHub. It is also the **sole executor of every project action** — add, deploy, remove all run inside it, and the CLI is an API call over a local unix socket. Everything under `/srv` has exactly one writer, one user, one set of locks; the first deploy of a project clones, later ones fetch. There is no third-party webhook software — the receiver is a few hundred lines of boson using only in-box .NET (spec §14).
+Caddy runs as a container. The boson daemon is the same binary as the CLI, run as `boson serve` under systemd (unit and `boson` system user created by `boson init`, removed by `boson uninstall`). CLI invocations remain one-shot processes; the daemon exists because something must hold a socket open for GitHub. It is also the **sole executor of every project action** — add, deploy, remove all run inside it, and the CLI is an API call over a local unix socket. Everything under `/srv` has exactly one writer, one user, one set of locks; every deploy fetches, the first into an empty checkout. There is no third-party webhook software — the receiver is a few hundred lines of boson using only in-box .NET (spec §14).
 
 ## Persistent state on the host
 
@@ -45,7 +45,7 @@ Caddy runs as a container. The boson daemon is the same binary as the CLI, run a
 /usr/local/bin/boson                   # binary (user-installed)
 /etc/systemd/system/boson.service      # daemon unit — written by `boson init`, removed by `boson uninstall`
 /var/lib/boson/boson.db                # SQLite — source of truth (config, projects, App credentials, secrets)
-/srv/<org>/<name>/repo/               # cloned repo (docker compose build context)
+/srv/<org>/<name>/                    # the checkout (docker compose build context)
 ```
 
 Plus docker-managed named volumes (`caddy-data`, `caddy-config`) for Caddy's cert state — that's docker's filesystem, not boson's.
@@ -68,7 +68,7 @@ Stored in SQLite, three required values per project:
 
 | Column | Purpose |
 |---|---|
-| `repo` (`org/name`) | What to clone |
+| `repo` (`org/name`) | What to fetch |
 | `hostname` | Public DNS name fronted by Caddy |
 | `upstream_port` | Host port Caddy reverse-proxies the hostname to |
 
@@ -97,14 +97,14 @@ Six things, all of them *between* systems rather than inside any one of them:
 1. **Ingress mapping** — hostname → host port, and the TLS that fronts it.
 2. **GitHub identity** — one App per project: manifest flow, credential capture, PEM storage, JWT signing, installation-token minting.
 3. **Webhook reception** — the `boson serve` daemon: HMAC verification, branch and activation filtering, delivery responses (403 = secret drift, 200 = verified but declined, 202 = deploy queued).
-4. **Source sync** — clone at `boson add`, fetch + reset at every deploy.
+4. **Source sync** — fetch + reset at every deploy; the first deploy starts from an empty checkout.
 5. **Deploy orchestration** — locking, coalescing concurrent pushes, `docker compose up -d --build`, and a durable record of what happened. All of it executes inside the daemon; the CLI only relays requests and streams results.
 6. **State** — SQLite as the single source of truth. Caddy config and the systemd unit are *derived*; re-running `boson init` rebuilds them from the DB and embedded resources.
 
 ### What boson explicitly does not own
 
 - **Anything inside a project's compose file** — build args, container env, volumes, sidecars, inter-service dependencies, database migrations, job runners. This is the black-box rule, and it's what lets boson know only three facts per project.
-- **DNS.** Boson validates that a hostname resolves to this host and refuses to proceed if it doesn't. It never creates or edits records.
+- **DNS.** Boson checks that a hostname resolves, warns when the address matches no local interface (common and legitimate behind NAT), and never creates or edits records. The end-to-end HTTPS check at install is what proves the record actually points here.
 - **Host provisioning.** Docker, the compose plugin, `git`, firewall rules, OS updates, kernel, disk. See "Installs one daemon, nothing else" below.
 - **Uninstalling GitHub Apps.** `boson remove` archives the project and surfaces the App's settings URL; removing the App on GitHub's side stays a human action, so a mistaken `remove` is never destructive to the GitHub relationship.
 - **Rollback.** There is no `boson rollback` in v1 — recovery from a bad deploy is to push a revert. See spec §21 [Q12].
@@ -139,9 +139,9 @@ Installing packages would mean guessing the distro and package names and mutatin
 - **DNS records** for the admin hostname and every project hostname, pointing at this host.
 - **The host itself** — Docker with the compose plugin, `git`, a systemd init, ports 80/443 free and reachable from the internet, root (init needs it to create the user and unit). All verified by `boson init` (reachability by its final HTTPS check rather than preflight), none installed by it.
 - **The project's `docker-compose.yml`**, at the repo root, binding to `127.0.0.1:<upstream_port>` so Caddy can reach it. Choosing that port and keeping it unique across projects is a human decision.
-- **Application secrets and env** — dropped at `/srv/<org>/<name>/.env`, or wherever the project's compose `env_file:` points.
+- **Application secrets and env** — created at `/srv/<org>/<name>/.env` after `boson add`, from the repo's template, or wherever else the project's compose `env_file:` points.
 - **Two browser interactions** during `boson add`: creating the App, then installing it on the repo.
-- **Env vars before the first successful deploy** — `boson add` deploys immediately; if the compose needs env, that deploy fails until `/srv/<org>/<name>/.env` is in place and `boson deploy` is re-run. Webhooks stay inert until a deploy succeeds, so a half-configured project can't auto-deploy.
+- **Env vars before the first deploy** — `boson add` fetches but doesn't deploy; if the compose needs env, create `/srv/<org>/<name>/.env` (from the repo's template) before running `boson deploy`. Webhooks stay inert until a deploy succeeds, so a half-configured project can't auto-deploy.
 - **Uninstalling the GitHub App** after `boson remove`.
 - **Backing up `/var/lib/boson/boson.db`.** This one is load-bearing: the DB holds every project's App private key and webhook secret, and because everything else is *derived from* it, nothing can rebuild it. Lose that file and the only path back is re-running the manifest flow for every project and cleaning up orphaned Apps on GitHub by hand. Boson ships no backup tooling and has no opinion about where copies go — but note the DB is WAL-mode with a concurrent writer, so `VACUUM INTO` is the safe way to snapshot it live, not `cp`.
 
@@ -161,7 +161,7 @@ boson init deploy.example.com
 The `curl` above is the only third-party thing the user installs on boson's behalf. Everything else boson creates on the host is boson's own artifact, and `boson uninstall` removes it. There is no runtime to install — the binary is a self-contained .NET publish, so no .NET needs to be present.
 
 `boson init` does:
-1. Verifies prerequisites and **stops if any are missing**, reporting all of them at once with the fix for each: docker + compose plugin, `git`, systemd as init, ports 80/443 free, admin hostname's A record pointing here, and outbound reachability to Docker Hub / GitHub. Nothing is installed and nothing is created if this fails.
+1. Verifies prerequisites and **stops if any are missing**, reporting all of them at once with the fix for each: docker + compose plugin, `git`, systemd as init, ports 80/443 free, the admin hostname resolving, and outbound reachability to Docker Hub / GitHub. Nothing is installed and nothing is created if this fails.
 2. Creates the `boson` system user (no shell, member of `docker` group), `/var/lib/boson/`, `/var/log/boson/`, `/srv/`; initializes `boson.db` (schema migration).
 3. Writes `/etc/systemd/system/boson.service` (embedded template) and `systemctl enable --now boson` — the daemon comes up on `127.0.0.1:9000`.
 4. Brings up Caddy via `docker compose -f - up -d` with the YAML piped over stdin.
@@ -189,27 +189,27 @@ boson add marketcanary6/market-canary \
 
 Or with prompts for missing args. The CLI is an API call: it sends the request to the daemon over the local socket, prints the setup URL the daemon returns (opening it too if the machine has a browser; the URL is public, so on a headless host the operator opens it on their own machine), and polls for progress. The daemon:
 
-1. **Validates**: hostname A record points here; repo, hostname and port are each unclaimed by any other project.
+1. **Validates**: the hostname resolves (a warning when the address matches no local interface); repo, hostname and port are each unclaimed by any other project; the port is none of 80, 443, 2019, 9000, which the platform uses.
 2. **Runs the GitHub App manifest flow** on the routes it already serves: the browser lands on `/_boson/setup-app/start`, the user clicks "Create GitHub App", GitHub redirects back with a code, the daemon exchanges it for the App credentials.
 3. **Captures the installation**: the browser is sent to `https://github.com/apps/<app_slug>/installations/new`; the user installs it on the repo; GitHub redirects back with the installation id.
 4. **Persists the project**: one complete row — repo, hostname, port, branch, and the five `github_*` credential columns. Nothing was written before this point.
 5. **Pushes Caddy config**: the hostname's reverse-proxy route. Caddy provisions an LE cert for it.
-6. **Runs the first deploy** — which clones to `/srv/<org>/<name>/repo/`.
+6. **Fetches the checkout** into `/srv/<org>/<name>/`.
 
-End state on success: repo on disk, GitHub App registered and installed, Caddy routing the hostname, app running, push-to-deploy live. On a failed first deploy (typically missing env vars) everything holds except the last two: the daemon answers each push with 200 but declines to deploy until a `boson deploy` succeeds. Abandon the browser before the persist step and nothing was written; re-run to start over (an orphaned GitHub App is deleted by hand). Ctrl-C in the CLI stops only the progress display; the daemon completes or expires the flow on its own.
+End state on success: repo on disk, GitHub App registered and installed, Caddy routing the hostname. Nothing is running yet: the admin places `/srv/<org>/<name>/.env` if the compose needs one (starting from the repo's template) and runs `boson deploy`. Push-to-deploy switches on with that deploy's first success, so a half-configured project can't auto-deploy; until then the daemon answers each push with 200 and declines. Abandon the browser before the persist step and nothing was written; re-run to start over (an orphaned GitHub App is deleted by hand). Ctrl-C in the CLI stops only the progress display; the daemon completes or expires the flow on its own.
 
 ### Deploying the project
 
-`boson add` triggers the first deploy itself. `boson deploy <org/name>` re-runs one at any time: after placing env vars, after a failed build, or to force a redeploy. Either way the CLI hands the request to the daemon over the local socket, streams the deploy log to the terminal, and exits with the outcome. The daemon runs:
+The first deploy is the admin's explicit `boson deploy <org/name>`, run once env is in place; the same command redeploys at any time: after a failed build, or to force a rebuild. Either way the CLI hands the request to the daemon over the local socket, streams the deploy log to the terminal, and exits with the outcome. The daemon runs:
 
 1. **Mint a fresh installation access token.** In-process: sign an RS256 JWT with the App's PEM (from SQLite), POST it to `https://api.github.com/app/installations/<installation_id>/access_tokens`, get back a `ghs_…` token good for ~1 hour. Held in memory only, never written to disk.
-2. **Refresh the working tree to the branch tip.** Clone if the checkout is missing (the first deploy); otherwise `git fetch` + `git reset --hard`. Every deploy means "deploy the latest commit". The token is passed inline on the fetch command so it never lands in `.git/config`.
+2. **Refresh the working tree to the branch tip.** `git init` if the checkout is missing (the first deploy), then `git fetch` + `git reset --hard`, the same path every time. Every deploy means "deploy the latest commit". The token is passed inline on the fetch command so it never lands in `.git/config`.
 3. `cd /srv/<org>/<name>/repo` and `docker compose up -d --build`. A deploy succeeds when compose exits 0 — boson does not health-probe the app afterwards (a project that wants a health gate defines a compose `healthcheck`).
 4. **Activate the webhook** (first successful deploy only): set the project's `webhook_active` flag in SQLite. The daemon checks it per request — nothing else to regenerate.
 
 After this, every push to the project's branch triggers a deploy automatically.
 
-Pushes that land while a deploy is already running are recorded and picked up by the running deploy before it finishes, so a burst of pushes collapses to at most one extra deploy and the newest commit ends up live. GitHub gives a webhook 10 seconds to respond and never retries a failed delivery, so boson remembers every verified push.
+Pushes that land while a deploy is already running are recorded and picked up by the running deploy before it finishes, so a burst of pushes collapses to at most one extra deploy and the newest commit ends up live. GitHub gives a webhook 10 seconds to respond and never retries a failed delivery, so boson remembers such pushes itself rather than parking them with GitHub.
 
 `boson deploy` is also the manual redeploy path — re-running it is idempotent (same fetch + compose up).
 
@@ -217,7 +217,7 @@ Pushes that land while a deploy is already running are recorded and picked up by
 
 ```
 boson init <admin-hostname>   # Install the platform; re-run = rebuild derived state (recovery)
-boson add <org/name> ...      # Register a project, clone, first deploy
+boson add <org/name> ...      # Register a project, fetch it
 boson deploy <org/name>       # Manual (re-)deploy
 boson list                    # All projects: status, containers, last deploy
 boson remove <org/name>       # Tear down a project, archive its record
@@ -236,7 +236,6 @@ Embedded as resources in the boson binary:
 
 - The systemd unit template (`boson.service`). Written to `/etc/systemd/system/` at `boson init`.
 - The compose YAML template for the platform stack (Caddy only). Rendered to a string and piped to `docker compose -f -`.
-- The Caddy initial config JSON (admin hostname only). POSTed to Caddy's admin API.
 - HTML for the manifest flow's `/start` page (auto-submitting form) and the post-callback "✓ return to your terminal" pages.
 
 ## Webhook receiver (in the daemon)
@@ -255,7 +254,7 @@ Full endpoint contract: spec §14.
 2. GitHub creates the App with that URL, auto-generates a webhook secret.
 3. The manifest exchange returns the PEM, webhook secret, App id and slug to boson; boson stores all of these in the `github_*` columns.
 4. Caddy already routes the admin hostname's `/_boson/*` to the daemon (since `init`), and the daemon reads the row per request — **from here GitHub's pushes verify and get a 200, but the daemon declines to deploy them** (logged) because the project isn't active yet.
-5. After the first deploy succeeds (normally inside `boson add`), boson flips the project's `webhook_active` flag. Now pushes trigger deploys.
+5. After the first deploy succeeds (the admin's first `boson deploy`), boson flips the project's `webhook_active` flag. Now pushes trigger deploys.
 
 Users never touch GitHub repo settings. Each project is independent — its own App, its own secret, its own webhook URL path.
 
@@ -290,7 +289,7 @@ Tracked in `BOSON_SPEC.md` §21, which is authoritative.
 
 1. **`boson init`** — create the `boson` user + unit, bring up the daemon (health endpoint only) and Caddy. No projects. Verify HTTPS works for the admin hostname.
 2. **Caddy admin-API plumbing** — boson can add and remove routes from the running Caddy.
-3. **`boson add` (no GitHub App yet)** — accept a public repo, clone it, add the Caddy hostname route, persist to SQLite. Insert placeholder credentials (the columns are NOT NULL); step 4 replaces this path.
+3. **`boson add` (no GitHub App yet)** — accept a public repo, fetch it, add the Caddy hostname route, persist to SQLite. Insert placeholder credentials (the columns are NOT NULL); step 4 replaces this path.
 4. **GitHub App manifest flow** — wire `/_boson/setup-app/*` end-to-end.
 5. **Token minter + private repo cloning** — replace the public-repo stub. JWT signing in-process from the .pem in SQLite.
 6. **`boson deploy` + webhook endpoint** — first deploy flips `webhook_active`; the daemon's receiver goes live; first real push-to-deploy works.

@@ -57,7 +57,7 @@ One binary, two modes: every CLI command is a short-lived process, and `boson se
 ├────────────────────────────────────────────────────────────┤
 │ Util/ — ProcessRunner · GitCli · DockerCli · DnsResolver   │
 │ Resources/ — embedded platform compose YAML,               │
-│ boson.service unit, caddy-init.json, SQL migrations,       │
+│ boson.service unit, SQL migrations,                        │
 │ manifest-flow HTML                                         │
 └────────────────────────────────────────────────────────────┘
 ```
@@ -137,7 +137,6 @@ boson/
 │   ├── Resources/                          # all embedded .resx-style content
 │   │   ├── boson.service
 │   │   ├── platform-compose.yaml
-│   │   ├── caddy-init.json
 │   │   ├── manifest-start.html
 │   │   ├── manifest-success.html
 │   │   └── migrations/
@@ -173,9 +172,8 @@ Single `Boson.csproj`. No premature split into Core/Cli — every module is reac
 ├── boson.log                              # structured JSONL, rolling 10 MB × 5
 └── deploys/
     └── <deploy-id>.log                    # captured stdout+stderr per deploy
-/srv/<org>/<name>/                         # project dir, named by the repo
-├── repo/                                  # the checkout = compose build context
-└── .env                                   # project env, if its compose references it
+/srv/<org>/<name>/                         # the checkout = compose build context
+└── .env                                   # created by the admin after `boson add`; gitignored by the repo
 ```
 
 ---
@@ -244,7 +242,7 @@ CREATE INDEX idx_deploys_project_started ON deploys(project_id, started_at DESC)
 ```
 
 Notes:
-- Projects are identified by `repo` (`org/name`), stored lowercase since GitHub compares names case-insensitively. Uniqueness is **active-scoped**: repo, hostname and port are unique among non-archived rows, so `boson remove` releases all three and re-adding the same repo works. `deploys` references the surrogate `id`, so history follows its archived row and `--purge` cascades it away instead of orphaning it. Every "by repo" lookup means "the active row with that repo".
+- Projects are identified by `repo` (`org/name`), stored lowercase since GitHub compares names case-insensitively. Lowercasing happens once, at CLI argument parse, so the row, the filesystem path, the manifest's webhook URL and §14's path lookup all carry the same form. Uniqueness is **active-scoped**: repo, hostname and port are unique among non-archived rows, so `boson remove` releases all three and re-adding the same repo works. `deploys` references the surrogate `id`, so history follows its archived row and `--purge` cascades it away instead of orphaning it. Every "by repo" lookup means "the active row with that repo".
 - Every `github_*` column is `NOT NULL`: a project row is inserted only once `boson add` has everything (§11). A row existing means the project is fully added.
 - `deploy_pending` is the coalescing flag. A verified push that finds a deploy already running sets it; the in-flight deploy drains it before releasing the lock by running one more deploy of the branch tip. Set on an idle project means a redeploy was dropped — `boson list` surfaces it.
 - `archived_at` keeps the row around after `boson remove` — useful for incident forensics. Hard-delete is a separate `--purge` flag.
@@ -271,12 +269,14 @@ Steps spelled out in §10. Preflight never installs anything — see §10. Idemp
 ```
 boson add <org/name>
           --hostname <host>
-          --upstream-port <port>
+          --upstream-port <port>       # 1-65535; 80, 443, 2019 and 9000 are reserved (Caddy, its admin API, the daemon)
           [--branch <branch>]          # default: main
 ```
-The CLI is an API call: it POSTs the request over `boson.sock`, prints the setup URL the daemon returns (and opens it if the machine has a browser — the URL is public, served through Caddy, so the browser can be anywhere), and polls for progress. The daemon runs the entire flow (§11) — manifest exchange, credential capture, row insert, Caddy route, first deploy (which performs the clone). Nothing is persisted until the flow has everything; the row is inserted whole.
+The CLI is an API call: it POSTs the request over `boson.sock`, prints the setup URL the daemon returns (and opens it if the machine has a browser — the URL is public, served through Caddy, so the browser can be anywhere), and polls for progress. The daemon runs the entire flow (§11) — manifest exchange, credential capture, row insert, Caddy route, and the initial fetch that populates the checkout. Nothing is persisted until the flow has everything; the row is inserted whole. `add` stops short of deploying because the admin may still need to create the project's `.env` secrets file, which only exists after the checkout does; an auto-deploy would just fail against it. So deploying is the admin's next step: place `/srv/<org>/<name>/.env` if the compose needs one (repos designed for boson ship a template) and run `boson deploy`; its first success activates push-to-deploy (§6 step 8).
 
-A failed first deploy (typically missing env) leaves the project added and inactive, with the fix printed: place `/srv/<org>/<name>/.env`, run `boson deploy <org/name>`. Abandoned earlier: nothing was persisted; re-run to start over. The only possible residue is an orphaned GitHub App, deleted by hand.
+A failed initial fetch leaves the project added; `boson deploy` retries it. Abandoned earlier: nothing was persisted; re-run to start over. The only possible residue is an orphaned GitHub App, deleted by hand.
+
+The exit code reports the add: 0 once the project row is persisted, even if the initial fetch failed (the failure is printed; `boson deploy` retries it); 1 for validation failures; 2 when the flow itself failed and nothing was persisted.
 
 ### `boson deploy`
 ```
@@ -348,7 +348,7 @@ JsonDocument Build(IReadOnlyList<Project> projects, string adminHostname);
 ```
 
 ### `ManifestFlowOrchestrator`
-Runs inside the daemon (§11): owns the pending-setup entries (in-memory, keyed by state token, 15-minute TTL) and handles the `/_boson/setup-app/*` requests. On completion it inserts the project row and starts the first deploy; the CLI observes progress through the `/add/status` RPC.
+Runs inside the daemon (§11): owns the pending-setup entries (in-memory, keyed by state token, 15-minute TTL) and handles the `/_boson/setup-app/*` requests. On completion it inserts the project row, pushes the Caddy route and fetches the checkout; the CLI observes progress through the `/add/status` RPC.
 
 ### `InstallationTokenMinter`
 ```csharp
@@ -370,11 +370,11 @@ Every deploy means "deploy the branch tip, now" — no target commit is passed. 
    - `trigger=='manual'` → return `LockHeld` (the RPC answers 409; the CLI exits 3).
 2. Open new `deploys` row, `status='running'`, log to `/var/log/boson/deploys/<id>.log`.
 3. `InstallationTokenMinter.MintAsync(repo)` — returns a short-lived `ghs_…` token (see §13).
-4. If `/srv/<org>/<name>/repo/` is missing: `git clone --depth=1`. Otherwise `GitCli.FetchAndResetAsync(repoPath, repo, branch, token)` — see §13. Working tree is now at the branch tip.
+4. `GitCli.FetchAndResetAsync(projectDir, repo, branch, token)`: `git init` first when `/srv/<org>/<name>/.git` doesn't exist, then the same fetch + reset every time (§13). One path for the first deploy and every later one, and `init` + fetch works in a directory that already holds files, where `git clone` would refuse. Working tree is now at the branch tip.
 5. `UPDATE deploys SET commit_sha = <git rev-parse HEAD>`.
-6. `docker compose -f /srv/<org>/<name>/repo/docker-compose.yml up -d --build` (cwd = repo dir; pass `--quiet-pull`).
-7. If webhook_active==0 (first successful deploy): mark `webhook_active=1`. Activation is purely this DB flag — the daemon checks it per request.
-8. Update `deploys` row `status='succeeded'|'failed'`, `finished_at`. Success means `docker compose up` exited 0 — boson does not probe the app afterwards. Health checking is descoped: a project that wants one defines a compose `healthcheck`, which is inside the black box.
+6. `docker compose --project-name <org>-<name> -f /srv/<org>/<name>/docker-compose.yml up -d --build` (cwd = the checkout; pass `--quiet-pull`). The explicit `--project-name` is required: compose otherwise derives the project name from the compose file's directory basename, the bare repo name, which any two orgs' same-named repos (and unrelated compose projects on the host) share, and colliding projects recreate each other's containers. The name is the repo lowercased with `/` (and any other character outside compose's allowed set `[a-z0-9_-]`) replaced by `-`. Every compose invocation for a project passes the same name: `up` here, `ps` in `boson list`, `down` in `boson remove`.
+7. Update `deploys` row `status='succeeded'|'failed'`, `finished_at`. Success means `docker compose up` exited 0 — boson does not probe the app afterwards. Health checking is descoped: a project that wants one defines a compose `healthcheck`, which is inside the black box.
+8. Only if step 7 recorded `succeeded` and `webhook_active==0`: mark `webhook_active=1`. Activation is purely this DB flag — the daemon checks it per request. A failed first deploy leaves the project inactive.
 9. **Drain `deploy_pending`** — still holding the lock: if set, clear it and loop back to step 2 (`trigger='webhook'`, a new `deploys` row) — the tip has moved since this deploy fetched it.
 
     Draining happens whether the deploy succeeded or failed — a newer commit is often the fix for a broken one. Bounded at **3 passes** per invocation; if `deploy_pending` is still set after that, leave it, log a warning, and let `boson list` surface it rather than looping indefinitely under a push flood.
@@ -386,32 +386,17 @@ Steps 2–9 are the loop body. A burst of N pushes during one deploy therefore c
 
 ## 7. Caddy admin API plumbing
 
+### Host networking
+
+The caddy container runs with `network_mode: host` (§9): it shares the host's network stack, binds 80/443 itself, and reaches every upstream over host loopback. Project containers and the daemon bind `127.0.0.1:<port>`, and a loopback-bound port answers only connections arriving on the host's own loopback; a container on a bridge network cannot originate one (`host.docker.internal:host-gateway` arrives on the bridge address, which a loopback-bound port refuses). Moving Caddy onto a bridge network therefore breaks every proxied route, webhooks included.
+
 ### Reaching the admin API
 
-Caddy's admin API is published to the host at `127.0.0.1:2019` (loopback only).
+With host networking, Caddy's default admin bind (`localhost:2019`) lands directly on the host's loopback. Boson's `CaddyAdminClient` uses `HttpClient` against `http://127.0.0.1:2019`. No port publishing, no `docker exec` indirection, no JSON escaping problems.
 
-In `platform-compose.yaml`:
-```yaml
-caddy:
-  image: caddy:2-alpine
-  ports:
-    - "80:80"
-    - "443:443"
-    - "127.0.0.1:2019:2019"   # admin API; not internet-reachable
-```
+### Reaching upstreams from Caddy
 
-Boson's `CaddyAdminClient` uses `HttpClient` against `http://127.0.0.1:2019`. No `docker exec` indirection; no JSON escaping problems.
-
-### Reaching project containers from Caddy
-
-Caddy is in a container; project containers bind to `127.0.0.1:<port>` on the host. We use Docker's `host.docker.internal` (resolved via `extra_hosts: host-gateway` on the caddy service):
-```yaml
-caddy:
-  extra_hosts:
-    - "host.docker.internal:host-gateway"
-```
-
-A project route's upstream is `host.docker.internal:<upstream_port>`.
+A project route's upstream is `127.0.0.1:<upstream_port>`; the daemon's is `127.0.0.1:9000`.
 
 ### Caddy config shape
 
@@ -427,11 +412,11 @@ We use Caddy's structured JSON config, not Caddyfile. One server (`main`) listen
           "routes": [
             {
               "match": [{"host": ["deploy.example.com"], "path": ["/_boson/*"]}],
-              "handle": [{"handler": "reverse_proxy", "upstreams": [{"dial": "host.docker.internal:9000"}]}]
+              "handle": [{"handler": "reverse_proxy", "upstreams": [{"dial": "127.0.0.1:9000"}]}]
             },
             {
               "match": [{"host": ["marketcanary.co"]}],
-              "handle": [{"handler": "reverse_proxy", "upstreams": [{"dial": "host.docker.internal:8080"}]}]
+              "handle": [{"handler": "reverse_proxy", "upstreams": [{"dial": "127.0.0.1:8080"}]}]
             },
             {
               "match": [{"host": ["deploy.example.com"]}],
@@ -470,7 +455,7 @@ Reboots therefore need nothing from the user: Caddy resumes its own config, syst
 
 ## 8. The boson daemon (`boson serve`)
 
-The one resident boson process, and the **sole executor of every project action** — add, deploy, remove all run inside it; the CLI is an API call. Every write to `/srv` happens in this process, as the `boson` user (the first deploy of a project clones; later ones fetch). Two listeners:
+The one resident boson process, and the **sole executor of every project action** — add, deploy, remove all run inside it; the CLI is an API call. Every write to `/srv` happens in this process, as the `boson` user (every deploy fetches; the first into an empty directory). Two listeners:
 
 - TCP `127.0.0.1:9000`, fronted by Caddy for TLS: `/_boson/health`, the webhook endpoint (§14), and the App-setup redirect endpoints (§11 — protected by their one-time state tokens, not HMAC).
 - Unix socket `/var/lib/boson/boson.sock`: the CLI RPC (below). Never exposed over TCP.
@@ -483,7 +468,7 @@ Webhook deploys run as in-process background tasks calling `Deployer.DeployAsync
 |---|---|---|
 | `POST /add` `{repo, hostname, port, branch}` | Validates, creates a pending-setup entry, returns the browser URL (§11) | 200 `{setupUrl, token}` · 409 collision |
 | `GET /add/status/{token}` | Progress of a pending add | 200 `{phase, deployId?, error?}` · 404 unknown or expired token |
-| `POST /deploy/{org}/{name}` (`trigger=manual`) | Starts `Deployer.DeployAsync` as a background task (clones first if the checkout is missing — §6 step 4) | 202 `{deployId}` · 409 already running · 404 unknown project |
+| `POST /deploy/{org}/{name}` (`trigger=manual`) | Starts `Deployer.DeployAsync` as a background task (initialises the checkout if missing, §6 step 4) | 202 `{deployId}` · 409 already running · 404 unknown project |
 | `POST /remove/{org}/{name}` (`purge?`) | Compose down, drop Caddy route, archive (or purge) | 200 · 404 |
 
 Auth is the socket file itself: `boson.sock`, mode 0660, owner `boson:boson` — root and the daemon's own user can connect, nothing else can. No tokens, no TLS, no request signing needed. The CLI observes a started deploy through the artifacts that already exist: it tails `/var/log/boson/deploys/<id>.log` and polls the `deploys` row (§5).
@@ -528,13 +513,13 @@ System user, no shell; member of the `docker` group; owns `/var/lib/boson`, `/va
 
 - **Startup recovery** — before listening, mark any `deploys` rows at `status='running'` as `failed`, `error='daemon restart'`. Unconditional and sound *because* the daemon is the sole deploy executor: a `running` row without a live daemon task can only be a crash orphan. (The in-flight row exists to anchor the deploy id and log path; the table's real job is recording outcomes.)
 - **Graceful shutdown** — on SIGTERM: stop accepting requests, let an in-flight deploy finish (bounded by `TimeoutStopSec`), exit 0. A deploy that is cut off anyway is caught by startup recovery on the next start.
-- **Upgrade** — replace the binary, `systemctl restart boson`. One binary on the host; daemon and CLI cannot version-skew.
+- **Upgrade** — replace the binary, then `systemctl restart boson` before running anything else: migrations run on every invocation (§5), so a CLI command in the gap would migrate the schema under the still-running old daemon. Restart first and the single binary keeps daemon and CLI in step.
 - **Crash** — systemd restarts within 2s. Requests in the gap get a 502 from Caddy: red in GitHub's Recent Deliveries (§12).
 - **Dev** — `boson serve` runs foreground on any OS; the unit file is a Linux-host concern only.
 
 ### Deploy execution inside the daemon
 
-`WebhookEndpoint` responds 202, then runs `Deployer.DeployAsync(repo, Webhook)` on a background task; failures land in the `deploys` row, never as unobserved exceptions. CLI-requested deploys enter through the RPC and become identical tasks, so contention is arbitrated entirely by `ProjectLocks` in-process (§16). There is no in-memory work queue: `deploy_pending` *is* the queue (§6 step 9), and it survives a daemon restart, which an in-memory flag would not.
+`WebhookEndpoint` responds 202, then runs `Deployer.DeployAsync(repo, Webhook)` on a background task; failures land in the `deploys` row, never as unobserved exceptions. CLI-requested deploys enter through the RPC and become identical tasks, so contention is arbitrated entirely by `ProjectLocks` in-process (§16). There is no in-memory work queue: `deploy_pending` *is* the queue (§6 step 9), and it survives a daemon restart, which an in-memory flag would not. Survival buys detection, not resumption: nothing drains the flag until the next deploy runs, so after a restart it surfaces as the `boson list` warning (§4), recovered with `boson deploy`.
 
 ---
 
@@ -550,13 +535,8 @@ services:
     image: caddy:2-alpine
     container_name: boson-caddy
     restart: unless-stopped
+    network_mode: host                        # see §7 "Host networking"
     command: ["caddy", "run", "--resume"]     # see §7 "Config durability across restarts"
-    ports:
-      - "80:80"
-      - "443:443"
-      - "127.0.0.1:2019:2019"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       - caddy-data:/data
       - caddy-config:/config
@@ -566,7 +546,7 @@ volumes:
   caddy-config:
 ```
 
-One service. The daemon is not in the stack — it is a host process (§8) that Caddy reaches via `host.docker.internal:9000`, exactly like project upstreams. No secrets appear in container env or `docker inspect` output; the daemon reads them from SQLite per request.
+One service. The daemon is not in the stack — it is a host process (§8) that Caddy reaches via `127.0.0.1:9000`, exactly like project upstreams. No secrets appear in container env or `docker inspect` output; the daemon reads them from SQLite per request.
 
 ---
 
@@ -574,11 +554,11 @@ One service. The daemon is not in the stack — it is a host process (§8) that 
 
 1. **Preflight** — verify every host prerequisite; abort without touching anything if any is missing. Detailed below.
 2. **User**: create the `boson` system user (no shell, member of `docker` group).
-3. **Filesystem**: create `/var/lib/boson/`, `/var/lib/boson/locks/`, `/var/lib/boson/tmp/`, `/var/log/boson/deploys/`, `/srv/`. Modes 0700 / 0600, owned `boson:boson`. Trees that already exist are `chown -R`'d to the (possibly new) `boson` UID — the uninstall→init round trip deletes and recreates the user, so ownership of kept data must be re-established here.
+3. **Filesystem**: create `/var/lib/boson/`, `/var/lib/boson/locks/`, `/var/lib/boson/tmp/`, `/var/log/boson/deploys/`, `/srv/`. Directories 0700, files 0600, owned `boson:boson`. Trees that already exist are `chown -R`'d to the (possibly new) `boson` UID — the uninstall→init round trip deletes and recreates the user, so ownership of kept data must be re-established here.
 4. **DB**: open `/var/lib/boson/boson.db`, run all embedded migrations. Insert platform rows: `admin_hostname`, `installed_at`, `binary_version`.
 5. **Daemon**: write `/etc/systemd/system/boson.service` (§8), `systemctl daemon-reload`, `systemctl enable --now boson`. Poll `127.0.0.1:9000/_boson/health` until 200 (10s timeout).
 6. **Compose stack**: render `platform-compose.yaml` (Caddy only), `docker compose -f - up -d`.
-7. **Caddy bootstrap**: poll `127.0.0.1:2019/config/` until 200 (10s timeout), then `POST /load` with the initial config (admin hostname routing `/_boson/*` to the daemon; no projects yet).
+7. **Caddy bootstrap**: poll `127.0.0.1:2019/config/` until 200 (10s timeout), then `POST /load` the `CaddyConfigBuilder` output built from DB state. On a fresh install that is just the admin hostname routing `/_boson/*` to the daemon; on a re-run it includes every project route, which is what makes re-init the recovery command (§15).
 8. **Verify**: `curl https://<admin-hostname>/_boson/health` returns 200 within 90s (LE issuance time). On failure, surface `docker logs boson-caddy` and `journalctl -u boson` tails.
 
 Idempotent: re-running `init` against an existing install rebuilds all derived state — full Caddy config from the DB (every project, not just the admin hostname), the unit file, the user, directory ownership — which makes it the recovery command after restoring a DB backup or manual meddling (§15). Preflight runs again on every invocation.
@@ -598,14 +578,15 @@ Installing packages would mean guessing the distro and package names and mutatin
 | 5 | systemd is the init system | `/run/systemd/system` exists and `systemctl` on PATH | fatal |
 | 6 | A usable port-inspection tool | `ss` present, else `netstat`, else fall back to a direct bind attempt on :80/:443 | fatal if none available |
 | 7 | Ports 80 and 443 free | via #6 | fatal |
-| 8 | Admin hostname resolves here | A/AAAA for the given admin hostname matches one of the host's public IPs | fatal |
+| 8 | Admin hostname resolves | the hostname has at least one A/AAAA record | fatal |
 | 9 | Outbound HTTPS reachability | HEAD against `registry-1.docker.io`, `github.com`, `api.github.com` | fatal |
 
 Notes on the ones that aren't obvious:
 
-- **#4 `git`.** boson shells out to `git` for the clone in `boson add` and the fetch in every deploy (§13). Discovering it missing at clone time — *after* the user has created and installed a GitHub App — leaves an orphaned App to clean up by hand.
+- **#4 `git`.** boson shells out to `git` on every deploy (§13). Discovering it missing at first-deploy time, *after* the user has created and installed a GitHub App, leaves an orphaned App to clean up by hand.
 - **#5 systemd.** WSL default distros, containers, and some minimal VMs aren't systemd hosts; the daemon can't be supervised there. Failing this loudly at preflight beats a cryptic `systemctl` error at step 5.
 - **#6, and why it is its own row.** The previous formulation, `ss -tln | grep -E ':80 |:443 '`, returns empty when `ss` itself is absent, and empty was read as "ports are free". A safety check that passes because its own tooling is missing is worse than no check at all. Absence of every probing method is a fatal preflight failure in its own right, not a silent pass.
+- **#8.** Resolution catches the typo and missing-record class. Whether the record points *here* cannot be decided locally: interface enumeration is wrong on any NAT'd host (the interface holds a private address), and an egress what's-my-IP probe adds a dependency and can differ from the ingress address anyway. When the resolved address matches no local interface, preflight prints both and continues; step 8's end-to-end HTTPS verify is the authoritative check.
 - **#9.** `init` pulls `caddy:2-alpine` from Docker Hub; `boson add` and every deploy talk to GitHub. On an egress-filtered host these fail mid-flow with errors that say nothing about which allowlist entry is missing. Probing first turns that into one clear sentence.
 
 **All checks run before any of them aborts.** Boson collects every failure and prints them together with the remediation for each, rather than failing on the first and making the user rediscover the next one on each re-run. Exit code 1 (user error), no stack trace.
@@ -615,7 +596,7 @@ $ boson init deploy.example.com
 ✗ Preflight failed — 2 problems. boson does not install host dependencies; please resolve these and re-run.
 
   git not found on PATH
-      Required to clone and update project repositories.
+      Required to fetch and update project repositories.
       Debian/Ubuntu:  apt-get install -y git
       Alpine:         apk add git
 
@@ -655,7 +636,7 @@ The daemon owns the whole flow; the CLI is an API call. The setup URL is public,
 [CLI] boson add <org/name> --hostname Y --upstream-port Z
    │
    ├─ RPC POST /add {repo, hostname, port, branch} over boson.sock
-   │   Daemon validates (collisions, hostname A record), creates an
+   │   Daemon validates (collisions, reserved ports, hostname resolution), creates an
    │   in-memory pending-setup entry keyed by a random state token,
    │   returns the setup URL.
    │
@@ -670,7 +651,9 @@ The daemon owns the whole flow; the CLI is an API call. The setup URL is public,
    │   Serves manifest-start.html: an auto-submitting <form>
    │   POSTing to https://github.com/settings/apps/new?state=<token>
    │   with the manifest JSON:
-   │     - name: "boson-<name>" (cosmetic; boson keys on the returned app id)
+   │     - name: "boson-<name>" (a starting value, editable on GitHub's form; App
+   │       names are globally unique on GitHub, and boson keys on the returned
+   │       app id, not the name)
    │     - url: https://github.com/<repo>
    │     - redirect_url: https://<admin-hostname>/_boson/setup-app/callback
    │     - setup_url: https://<admin-hostname>/_boson/setup-app/installed
@@ -696,23 +679,24 @@ The daemon owns the whole flow; the CLI is an API call. The setup URL is public,
    │
    │   [daemon, continuing in-process]
    │   ├─ Insert the complete project row (all credentials NOT NULL — §4)
-   │   ├─ Push Caddy config: add the hostname route → host.docker.internal:<port>
-   │   └─ Run the first deploy (§6; it clones, since no checkout exists).
-   │       On success: webhook_active=1.
+   │   ├─ Push Caddy config: add the hostname route → 127.0.0.1:<port>
+   │   └─ Fetch the checkout (§6 step 4's git path; no compose up).
    │
-   └─ CLI sees status=done (or failed): prints summary, or the env-file
-       path + `boson deploy` retry command after a failed first deploy.
+   └─ CLI sees status=done (or failed): prints the summary and the next
+       step: place /srv/<org>/<name>/.env if the compose needs env
+       (copy the repo's template), then `boson deploy <org/name>`.
+       The first successful deploy activates push-to-deploy (§6 step 8).
 ```
 
 ### Failure and cancellation
 
-Nothing is persisted before the "insert the complete project row" step. Pending-setup entries are in-memory with a 15-minute TTL: an abandoned browser or a daemon restart lets the entry evaporate — re-running `boson add` starts over. Ctrl-C in the CLI stops only the progress display: the daemon owns the flow, so a browser session that completes anyway still inserts the row and runs the first deploy, visible afterwards in `boson list`. A status poll for a token the daemon no longer holds answers 404; the CLI reports the add must be re-run. The only possible residue of an abandoned flow is an orphaned GitHub App, deleted by hand on GitHub. After the row insert, the project exists normally and any deploy failure is recovered with `boson deploy`.
+Nothing is persisted before the "insert the complete project row" step. Pending-setup entries are in-memory with a 15-minute TTL: an abandoned browser or a daemon restart lets the entry evaporate — re-running `boson add` starts over. Ctrl-C in the CLI stops only the progress display: the daemon owns the flow, so a browser session that completes anyway still inserts the row and fetches the checkout, visible afterwards in `boson list`. A status poll for a token the daemon no longer holds answers 404; the CLI reports the add must be re-run. The only possible residue of an abandoned flow is an orphaned GitHub App, deleted by hand on GitHub. After the row insert, the project exists normally and any fetch or deploy failure is recovered with `boson deploy`.
 
 ---
 
 ## 12. Push-to-deploy request flow
 
-The end-to-end trace for a single `git push` after `boson add` (including its first deploy) has succeeded. Every step here is a real network hop or process boundary.
+The end-to-end trace for a single `git push` after `boson add` and the admin's first `boson deploy` have succeeded. Every step here is a real network hop or process boundary.
 
 ```
 [Developer]                        git push origin main
@@ -722,7 +706,7 @@ The end-to-end trace for a single `git push` after `boson add` (including its fi
              │                     Body: full push event JSON
              ▼
 [Caddy]        matches route:  host=deploy.example.com AND path=/_boson/*
-               reverse_proxy to  host.docker.internal:9000  (the boson daemon, §8)
+               reverse_proxy to  127.0.0.1:9000  (the boson daemon, §8)
              │
              ▼
 [daemon]       WebhookEndpoint — the §14 pipeline, synchronous, sub-second:
@@ -732,7 +716,8 @@ The end-to-end trace for a single `git push` after `boson add` (including its fi
                   4. event == ping?                               (yes → 200)
                   5. body parses as a push event with a ref?      (no → 400)
                   6. payload.ref == refs/heads/<branch>?          (no → 200 "ignored")
-                  7. webhook_active == 1?                         (no → 200 "inactive")
+                  7. webhook_active == 1?  (no + deploy in flight → 202, deploy_pending set;
+                                            no + idle → 200 "inactive")
                   all pass → respond 202 {"status":"queued"}
                then, on a background task, Deployer.DeployAsync — the §6 steps:
                   1. ProjectLocks.TryEnter(<org/name>)  — in-daemon, §16
@@ -744,8 +729,8 @@ The end-to-end trace for a single `git push` after `boson add` (including its fi
                   5. UPDATE deploys SET commit_sha = HEAD
                   6. docker compose up -d --build         ─► rebuilds app image,
                                                             recreates container
-                  7. first-success activation (no-op here; webhook_active is already 1)
-                  8. UPDATE deploys SET status='succeeded', finished_at=now
+                  7. UPDATE deploys SET status='succeeded', finished_at=now
+                  8. first-success activation (no-op here; webhook_active is already 1)
                   9. drain deploy_pending — if a push landed during 3–8,
                      loop to 2 and deploy the (newer) tip
                   10. release the project lock
@@ -755,7 +740,7 @@ The end-to-end trace for a single `git push` after `boson add` (including its fi
                (visible in App → Advanced → Recent Deliveries)
 ```
 
-Zero Caddy-config changes throughout — the route to `<hostname>` is unchanged; only the container behind `host.docker.internal:<port>` is now the new build.
+Zero Caddy-config changes throughout — the route to `<hostname>` is unchanged; only the container behind `127.0.0.1:<port>` is now the new build.
 
 ### The HTTP response is not the deploy outcome
 
@@ -769,9 +754,9 @@ Zero Caddy-config changes throughout — the route to `<hostname>` is unchanged;
 
 | What breaks | Where it's caught | What the developer sees |
 |---|---|---|
-| Wrong HMAC (secret drift DB ↔ GitHub) | receiver step 3 | **403 — red in Recent Deliveries.** The daemon reads the secret from SQLite directly, so a mismatch means the DB and GitHub disagree. Won't self-heal; recovery is `boson remove` + `boson add`. |
+| Wrong HMAC (secret drift DB ↔ GitHub) | receiver step 3 | **403 — red in Recent Deliveries.** The daemon reads the secret from SQLite directly, so a mismatch means the DB and GitHub disagree. Won't self-heal; recovery is: delete the App on GitHub (boson surfaces its settings URL), then `boson remove` + `boson add`. The old App must go first: left installed it keeps delivering, permanently red, and its globally-unique name blocks the new manifest's `boson-<name>` until it is deleted or the user picks another name on GitHub's form. |
 | Push to a non-tracked branch | receiver step 6 | 200 `{"status":"ignored"}`; logged, never an error. |
-| Push before the first successful deploy (`webhook_active=0`) | receiver step 7 | 200 `{"status":"inactive"}`; deploys stay off until a deploy succeeds — normally `boson add`'s final step (§6 step 7). |
+| Push before the first successful deploy (`webhook_active=0`) | receiver step 7 | Mid-first-deploy: 202 with `deploy_pending` set: the in-flight deploy drains it (§6 step 9) and the pushed tip deploys and activates as usual. Idle: 200 `{"status":"inactive"}`; deploys stay off until the admin's first `boson deploy` succeeds (§6 step 8). |
 | Two pushes land in quick succession | Deployer step 1 (project lock held) | Both got 202. The second deploy's task finds the lock held and sets `deploy_pending`; the in-flight deploy drains it before releasing the lock (§6 step 9), so the newest commit wins. A burst of N pushes costs at most one extra deploy. |
 | Manual `boson deploy` runs concurrently with a webhook deploy | Deployer step 1 (same lock) | Webhook side coalesces as above (GitHub already got its 202). A *manual* request that loses the lock gets 409 from the RPC; the CLI exits 3 with a clear message — the human re-runs it. |
 | Daemon down when the operator runs `boson deploy` | CLI RPC connect | Exit 2, message points at `systemctl status boson` / `journalctl -u boson`. systemd normally has the daemon back within 2s (§8); if the binary itself is broken, a local deploy would be equally broken — same binary. |
@@ -827,7 +812,7 @@ Held in memory for the lifetime of one deploy pass (see the no-cache note under 
 
 `GitCli.FetchAndResetAsync(repoPath, repo, branch, token)`. Every deploy takes the branch tip:
 ```bash
-cd /srv/<org>/<name>/repo
+cd /srv/<org>/<name>
 git fetch https://x-access-token:<token>@github.com/<org>/<name>.git \
           --depth=1 --no-tags \
           +refs/heads/<branch>:refs/remotes/origin/<branch>
@@ -844,7 +829,7 @@ Details:
 `reset --hard` restores tracked files but leaves **untracked** files alone, and boson does not run `git clean`. Two consequences:
 
 - A file deleted from the repo, or a build artefact written into the checkout by a previous `docker build`, persists in the build context indefinitely. In practice Dockerfiles copy what they need by name, so this is inert; a project that needs a pristine context can `docker build --no-cache` via its own compose config.
-- Anything a user drops inside the checkout survives deploys. This is the safer failure direction, but it is **not** the supported way to supply env vars — those belong at `/srv/<org>/<name>/.env`, one level *above* the clone (see the plan's deploy section), precisely so the choice here stays reversible. If we ever add `git clean -fdx`, only that convention keeps it from deleting user data.
+- Untracked files in the checkout survive deploys: `reset --hard` touches only tracked files, and boson never runs `git clean`. This is what makes `/srv/<org>/<name>/.env` work: a repo deployed by boson is designed for it, shipping a `.env` template and gitignoring the real file, and the admin creates `.env` in the checkout after `boson add`, before the first `boson deploy`. It is the admin's file, backups included. A commit that tracks a file named `.env` overwrites it on the next deploy; committers are trusted not to, the same trust the deploy model already extends to them.
 
 ### Argv-exposure caveat
 
@@ -854,9 +839,9 @@ git -c http.extraheader="Authorization: Bearer <token>" fetch https://github.com
 ```
 (same real exposure — the header value is still in argv — but less obvious to casual `ps`). Or a `GIT_ASKPASS` helper script for full opacity.
 
-### Why fetch, not re-clone
+### One git path, no clone
 
-The clone happens on the first deploy (`git clone --depth=1`, same token handling — §6 step 4). Subsequent deploys reuse the local object database — nothing to download for unchanged blobs, and Docker's build-context cache stays warm.
+Every deploy runs the same `git init` (when `.git` is missing) + fetch + reset (§6 step 4); there is no separate clone code path, and initialisation works in a directory that already holds operator-dropped files. Subsequent deploys reuse the local object database: nothing to download for unchanged blobs, and Docker's build-context cache stays warm.
 
 ---
 
@@ -872,7 +857,7 @@ The clone happens on the first deploy (`git clone --depth=1`, same token handlin
 | 4 | `X-GitHub-Event: ping`? | 200 `{"status":"pong"}` — GitHub sends one at App creation; handled, not an error |
 | 5 | Body parses as a push event with `ref` | 400 |
 | 6 | `ref == refs/heads/<branch>` | 200 `{"status":"ignored"}` + log line |
-| 7 | `webhook_active == 1` | 200 `{"status":"inactive"}` + log line |
+| 7 | `webhook_active == 1` | If 0 with the project's deploy lock held (its first deploy is in flight): set `deploy_pending` and answer **202** `{"status":"queued"}`: the running deploy drains it (§6 step 9), so this push's tip still lands. If 0 and idle: 200 `{"status":"inactive"}` + log line |
 
 All pass → **202** `{"status":"queued"}`, then `Deployer.DeployAsync(repo, Webhook)` on a background task (§8) — which deploys the branch tip, so the payload's commit list is irrelevant. The response is sent before any deploy work starts, so GitHub's 10-second budget is met by construction.
 
@@ -890,8 +875,8 @@ Everything on the host is **derived** (rebuildable from SQLite), **irreplaceable
 |---|---|---|
 | Caddy live config | derived | re-running `init`, or Caddy's own autosave (§7) |
 | systemd unit `boson.service` | derived | re-running `init` rewrites from the embedded template (§8) |
-| `/srv/<org>/<name>/repo` checkouts | derived | the next deploy re-clones (§6 step 4) |
-| `/srv/<org>/<name>/.env` | user-supplied | the user re-creates it; boson never holds a copy |
+| `/srv/<org>/<name>` checkouts | derived | the next deploy re-fetches into place (§6 step 4); deleting the directory deletes the admin's `.env` with it |
+| `/srv/<org>/<name>/.env` | user-supplied | the admin re-creates it; boson never holds a copy |
 | Caddy's LE certs | derived | Caddy re-issues (mind LE rate limits) |
 | **`boson.db`** | **irreplaceable** | nothing — see below |
 
@@ -991,12 +976,12 @@ Tag push → release. Artifact filenames stable across versions so `curl …/lat
 | Layer | Approach |
 |---|---|
 | Pure logic (`CaddyConfigBuilder`, `SystemdUnit`) | xUnit + Verify snapshots. Cover edge cases (config with 0/1/N projects). |
-| `WebhookEndpoint` (§14) | xUnit with a test server + tempfile SQLite. The pipeline in order: oversized body → 413; unknown/archived project → 404; bad or missing signature → 403 (and the compare is `FixedTimeEquals`); ping → 200; malformed payload → 400; untracked ref → 200 ignored; inactive → 200; valid push → 202 and `DeployAsync` invoked. |
+| `WebhookEndpoint` (§14) | xUnit with a test server + tempfile SQLite. The pipeline in order: oversized body → 413; unknown/archived project → 404; bad or missing signature → 403 (and the compare is `FixedTimeEquals`); ping → 200; malformed payload → 400; untracked ref → 200 ignored; inactive + idle → 200; inactive + deploy in flight → 202 and `deploy_pending` set; valid push → 202 and `DeployAsync` invoked. |
 | `ProjectsRepository` etc. | xUnit against an in-memory or tempfile SQLite. |
 | `ManifestFlowOrchestrator` | xUnit with `WebApplicationFactory`-style test server. Stub GitHub calls via `HttpMessageHandler`. |
 | `Deployer` | Integration test with a fake compose project (a single nginx container) on Linux runners only. Gated behind `BOSON_INTEGRATION=1` env. |
 | Deploy coalescing (§6 step 9) | xUnit against `ProjectLocks` + tempfile SQLite, no docker. Cases: contention sets `deploy_pending` and returns `Coalesced`; drain loops exactly once; 3-pass bound holds under a synthetic flood and leaves `deploy_pending` set. |
-| `GitCli` clone + fetch/reset (§13) | Integration test against a throwaway GitHub repo: first call clones, second call after a new push lands the new tip; force-push on the branch is tolerated. Gated behind `BOSON_INTEGRATION=1`. |
+| `GitCli` init + fetch/reset (§13) | Integration test against a throwaway GitHub repo: first call initialises an empty directory, second call after a new push lands the new tip; force-push on the branch is tolerated; an untracked file dropped in the checkout survives both. Gated behind `BOSON_INTEGRATION=1`. |
 | `init` preflight (§10) | xUnit with a stubbed `ProcessRunner`. The cases that matter are the negative ones: `git` absent is fatal; *all* of `ss`/`netstat`/bind unavailable is fatal rather than a pass; multiple simultaneous failures are all reported in one run, not just the first. |
 | Caddy `--resume` (§7) | Integration test: `boson init`, POST a config, `docker restart boson-caddy`, assert the admin hostname still answers. This is the regression test for the reboot failure mode — it fails on the stock image command. Gated behind `BOSON_INTEGRATION=1`. |
 | End-to-end | Manual on a throwaway VPS initially; automate later. Reboot the VPS as part of it — a host restart is the one path with no boson process involved to paper over a mistake. |

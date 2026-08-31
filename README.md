@@ -19,7 +19,7 @@ The admin hostname is the platform's own address, where GitHub delivers webhooks
 
 ## Prepare your project
 
-Your repo needs a `docker-compose.yml` at its root whose web-facing service binds to loopback on a port you choose, unique per project on this host:
+Your repo needs a `docker-compose.yml` at its root whose web-facing service binds to loopback on a port you choose, unique per project on this host (80, 443, 2019 and 9000 are taken by the platform):
 
 ```yaml
 services:
@@ -27,9 +27,10 @@ services:
     build: .
     ports:
       - "127.0.0.1:8080:8080"
+    env_file: .env                # if your app takes env vars
 ```
 
-Caddy proxies the public hostname to that loopback port.
+Caddy proxies the public hostname to that loopback port. If your app takes env vars, reference `.env`, commit a template (`.env.example`) and gitignore the real file: the admin creates `.env` on the server after `boson add`.
 
 ## Add a project
 
@@ -39,17 +40,17 @@ boson add org/my-app --hostname my-app.example.com --upstream-port 8080
 
 Projects are referenced by repo name in every later command (`boson deploy org/my-app`). `--branch <name>` sets the tracked branch (default: `main`).
 
-`add` prints a setup URL; open it in any browser (your own machine is fine): you create a GitHub App for the project, then install it on the repo. Boson then clones the repo to `/srv/org/my-app/repo/` and sets up the hostname's routing and certificate.
+`add` prints a setup URL; open it in any browser (your own machine is fine): you create a GitHub App for the project, then install it on the repo. Boson then fetches the repo into `/srv/org/my-app/` and sets up the hostname's routing and certificate.
 
 Ctrl-C stops the progress display, not the add: complete the browser steps and the project is added anyway (`boson list` shows it). Abandon the browser instead and nothing was saved; re-run the same command to start over.
 
-`add` finishes by deploying the project and switching on push-to-deploy. If your compose needs env vars, that first deploy fails and tells you where to put them (`/srv/org/my-app/.env`, referenced via `env_file`); drop the file in place and run `boson deploy org/my-app`.
+`add` fetches the code but doesn't deploy, so you can set up secrets first: if your compose needs env vars, create `/srv/org/my-app/.env` (start from the repo's `.env.example`). Then run `boson deploy org/my-app`: the first successful deploy switches on push-to-deploy.
 
 ## Deploy
 
 **Every push to the tracked branch deploys automatically**: fetch, `docker compose up -d --build`, live. Pushes that land mid-deploy are remembered: the newest commit deploys when the running one finishes, and a burst of pushes costs at most one extra deploy.
 
-`boson deploy org/my-app` redeploys by hand at any time and is safe to re-run. A deploy succeeds when `docker compose up` exits 0; add a compose `healthcheck` if you want a health gate.
+`boson deploy org/my-app` deploys by hand: the first deploy after `add`, and any redeploy later. Safe to re-run. A deploy succeeds when `docker compose up` exits 0; add a compose `healthcheck` if you want a health gate.
 
 ### Reading GitHub's webhook dashboard
 
@@ -67,12 +68,14 @@ A 202 means the deploy was queued; its outcome lives in `boson list` and the dep
 
 ```
 boson init <admin-hostname>   # install the platform
-boson add <org/name> ...      # add a project and deploy it
+boson add <org/name> ...      # add a project (then: boson deploy)
 boson deploy <org/name>       # redeploy by hand
 boson list                    # all projects: containers, last deploy
 boson remove <org/name>       # tear down a project
 boson uninstall               # remove the platform
 ```
+
+Run every command as root: the CLI manages root-owned paths and talks to the daemon over a root-only socket.
 
 Exit codes: `0` success · `1` user error · `2` runtime failure · `3` deploy already running · `99` internal bug (file an issue).
 
