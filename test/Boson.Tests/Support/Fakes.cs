@@ -112,10 +112,12 @@ public sealed class FakeDnsResolver : IDnsResolver
 {
     public bool Resolves = true;
     public bool MatchesLocal = true;
+    /// <summary>Per-hostname override; the flat <see cref="Resolves"/> applies when unset.</summary>
+    public Func<string, bool>? ResolvesHost;
 
     public Task<IReadOnlyList<IPAddress>> ResolveAsync(string hostname, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyList<IPAddress>>(
-            Resolves ? [IPAddress.Parse("203.0.113.10")] : []);
+            (ResolvesHost?.Invoke(hostname) ?? Resolves) ? [IPAddress.Parse("203.0.113.10")] : []);
 
     public bool AnyMatchesLocalInterface(IReadOnlyList<IPAddress> addresses) => MatchesLocal;
 }

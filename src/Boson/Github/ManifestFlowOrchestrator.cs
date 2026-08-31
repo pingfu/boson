@@ -97,6 +97,15 @@ public sealed class ManifestFlowOrchestrator(
                 $"{hostname} resolves to no local interface (common and legitimate behind NAT); " +
                 "whether it points at this host is proven by opening the site");
 
+        // Every project gets a www redirect route, so Caddy will request a
+        // certificate for that name too. Missing record: Caddy retries the ACME
+        // challenge with backoff and the project's own hostname is unaffected.
+        if (!hostname.StartsWith("www.", StringComparison.Ordinal)
+            && (await dns.ResolveAsync($"www.{hostname}", ct)).Count == 0)
+            warnings.Add(
+                $"www.{hostname} does not resolve; boson serves a redirect for it anyway, so " +
+                "Caddy will keep retrying certificate issuance until the record exists");
+
         var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
         var entry = new PendingSetup
         {

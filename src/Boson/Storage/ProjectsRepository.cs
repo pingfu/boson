@@ -18,9 +18,9 @@ public interface IProjectsRepository
 public sealed class ProjectsRepository(Db db) : IProjectsRepository
 {
     private const string Columns = """
-        id AS Id, 
-        repo AS Repo, 
-        hostname AS Hostname, 
+        id AS Id,
+        repo AS Repo,
+        hostname AS Hostname,
         upstream_port AS UpstreamPort,
         branch AS Branch, 
         github_app_id AS GithubAppId, 

@@ -80,6 +80,18 @@ public sealed class ManifestFlowOrchestratorTests : IDisposable
             _orchestrator.BeginAddAsync(Request()));
     }
 
+    [Fact]
+    public async Task Unresolvable_www_name_warns_but_does_not_block_the_add()
+    {
+        // Every project gets a www redirect route, so a missing record is worth
+        // saying out loud; it is not a reason to refuse the project.
+        _dns.ResolvesHost = host => !host.StartsWith("www.");
+
+        var start = await _orchestrator.BeginAddAsync(Request());
+
+        Assert.Contains(start.Warnings, w => w.Contains("www.site.example.com does not resolve"));
+    }
+
     [Theory]
     [InlineData(80)]
     [InlineData(443)]
