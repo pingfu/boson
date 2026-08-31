@@ -75,7 +75,7 @@ boson remove <org/name>       # tear down a project
 boson uninstall               # remove the platform
 ```
 
-Run every command as root: the CLI manages root-owned paths and talks to the daemon over a root-only socket.
+Run every command as root: the CLI manages the platform's user, systemd unit and data directories, and the daemon's socket admits only root and the `boson` user.
 
 Exit codes: `0` success · `1` user error · `2` runtime failure · `3` deploy already running · `99` internal bug (file an issue).
 

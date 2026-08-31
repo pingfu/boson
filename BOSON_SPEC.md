@@ -2,7 +2,7 @@
 
 Companion to `BOSON_PLAN.md`. The plan describes *what boson is and what it does*; this spec describes *how it's built*. Where the plan handwaves an interaction, this spec pins it down.
 
-Open questions and judgement calls are flagged inline with **[Q]**. Decisions taken below are defaults, not commitments — push back on any of them.
+Open questions and judgement calls carry a **[Q]** tag, some inline, all consolidated in §21. Decisions taken below are defaults, not commitments — push back on any of them.
 
 ---
 
@@ -301,7 +301,7 @@ Per project: repo | hostname | port | branch | webhook active | container status
 boson remove <org/name> [--purge]
 ```
 An RPC like `deploy` — the daemon:
-- Stops project containers, `docker compose down`
+- Stops project containers: `docker compose -p <org>-<name> down`. The project name alone identifies the containers (compose labels), so a checkout that is missing (fetch never succeeded, or deleted by hand) doesn't block removal
 - Removes the Caddy route
 - Sets `archived_at`. With `--purge`: hard-delete row (deploy history cascades), `rm -rf /srv/<org>/<name>`. App on GitHub side is **not** uninstalled (user does that — boson surfaces the URL).
 
@@ -363,7 +363,7 @@ Reads `github_app_id` + `github_installation_id` + `github_app_pem` from SQLite,
 ```csharp
 Task<DeployResult> DeployAsync(string repo, DeployTrigger trigger, CancellationToken ct);
 ```
-Every deploy means "deploy the branch tip, now" — no target commit is passed. Branch and activation filtering happen *before* this is called: the daemon's `WebhookEndpoint` declines untracked refs and inactive projects and never invokes the Deployer for them (§14). `DeployAsync` assumes a valid, active target.
+Every deploy means "deploy the branch tip, now" — no target commit is passed. Branch filtering happens *before* this is called: the daemon's `WebhookEndpoint` declines untracked refs and never invokes the Deployer for them (§14). Activation filtering guards only the webhook entry path (an idle inactive project is declined there, §14 step 7); `DeployAsync` itself runs on inactive projects: every manual first deploy does (step 8 is where activation happens), and so does a drain pass for a push that landed mid-first-deploy (step 9).
 
 1. Acquire the project's in-daemon lock — `ProjectLocks.TryEnter(repo)`, non-blocking. Plain process-local state is sufficient because the daemon is the sole deploy executor (§8, §16). If held:
    - `trigger=='webhook'` → set `deploy_pending`; return `Coalesced`. The running deploy will pick it up at step 9.
@@ -906,7 +906,7 @@ The recovery command is re-running `boson init <admin-hostname>`: idempotent, re
 - Console output: human-readable, Spectre.Console (CLI); plain structured lines to stdout in `serve` mode, captured by journald.
 - File log: `/var/log/boson/boson.log`, JSONL, rolling 10 MB × 5. Every command logs `{ts, command, args, outcome, duration_ms}`; the daemon additionally logs every webhook request `{ts, repo, event, status, reason}`.
 - Per-deploy log: stdout+stderr of the `git fetch` / `git reset` (token redacted from the echoed URL) and `docker compose up --build`, written to `/var/log/boson/deploys/<id>.log`. Path stored in `deploys.log_path`. Each pass of the coalescing loop (§6 step 9) opens its own `deploys` row and its own log file.
-- No remote telemetry. **[Q5]** Anonymous usage ping? Default no.
+- No remote telemetry. **[Q3]** Anonymous usage ping? Default no.
 
 ---
 
@@ -994,8 +994,8 @@ Snapshot tests live in `test/Boson.Tests/Snapshots/`. Reviewed via `Verify`'s di
 
 - **[Q1]** Trim publishing — defer.
 - **[Q2]** DB encryption-at-rest — defer.
-- **[Q5]** Anonymous usage telemetry — default off.
-- **[Q6]** Repo location & licensing — `github.com/pingfu/boson`. Licence still TBD.
-- **[Q7]** Manifest flow `/start` page authentication beyond the state token — defer; the token is one-time with a 15-minute TTL, and the endpoints act only on live tokens (§11).
-- **[Q8]** Hostname aliases — defer.
-- **[Q12]** `boson rollback` — not in v1. The primitives exist (`reset --hard` to a SHA, `deploys.commit_sha` history); the objection is that it lets the host and the repo disagree with nothing recorded on GitHub's side. Revisit with operational experience.
+- **[Q3]** Anonymous usage telemetry — default off.
+- **[Q4]** Repo location & licensing — `github.com/pingfu/boson`. Licence still TBD.
+- **[Q5]** Manifest flow `/start` page authentication beyond the state token — defer; the token is one-time with a 15-minute TTL, and the endpoints act only on live tokens (§11).
+- **[Q6]** Hostname aliases — defer.
+- **[Q7]** `boson rollback` — not in v1. The primitives exist (`reset --hard` to a SHA, `deploys.commit_sha` history); the objection is that it lets the host and the repo disagree with nothing recorded on GitHub's side. Revisit with operational experience.

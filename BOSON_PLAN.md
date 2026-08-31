@@ -107,7 +107,7 @@ Six things, all of them *between* systems rather than inside any one of them:
 - **DNS.** Boson checks that a hostname resolves, warns when the address matches no local interface (common and legitimate behind NAT), and never creates or edits records. The end-to-end HTTPS check at install is what proves the record actually points here.
 - **Host provisioning.** Docker, the compose plugin, `git`, firewall rules, OS updates, kernel, disk. See "Installs one daemon, nothing else" below.
 - **Uninstalling GitHub Apps.** `boson remove` archives the project and surfaces the App's settings URL; removing the App on GitHub's side stays a human action, so a mistaken `remove` is never destructive to the GitHub relationship.
-- **Rollback.** There is no `boson rollback` in v1 — recovery from a bad deploy is to push a revert. See spec §21 [Q12].
+- **Rollback.** There is no `boson rollback` in v1 — recovery from a bad deploy is to push a revert. See spec §21 [Q7].
 - **Multi-host anything.** One host, no clustering, no scheduling, no service discovery.
 
 ### Trust model
@@ -138,7 +138,7 @@ Installing packages would mean guessing the distro and package names and mutatin
 
 - **DNS records** for the admin hostname and every project hostname, pointing at this host.
 - **The host itself** — Docker with the compose plugin, `git`, a systemd init, ports 80/443 free and reachable from the internet, root (init needs it to create the user and unit). All verified by `boson init` (reachability by its final HTTPS check rather than preflight), none installed by it.
-- **The project's `docker-compose.yml`**, at the repo root, binding to `127.0.0.1:<upstream_port>` so Caddy can reach it. Choosing that port and keeping it unique across projects is a human decision.
+- **The project's `docker-compose.yml`**, at the repo root, binding to `127.0.0.1:<upstream_port>` so Caddy can reach it. Boson rejects a port another boson project claims; keeping it clear of other listeners on the host is a human decision.
 - **Application secrets and env** — created at `/srv/<org>/<name>/.env` after `boson add`, from the repo's template, or wherever else the project's compose `env_file:` points.
 - **Two browser interactions** during `boson add`: creating the App, then installing it on the repo.
 - **Env vars before the first deploy** — `boson add` fetches but doesn't deploy; if the compose needs env, create `/srv/<org>/<name>/.env` (from the repo's template) before running `boson deploy`. Webhooks stay inert until a deploy succeeds, so a half-configured project can't auto-deploy.
@@ -204,7 +204,7 @@ The first deploy is the admin's explicit `boson deploy <org/name>`, run once env
 
 1. **Mint a fresh installation access token.** In-process: sign an RS256 JWT with the App's PEM (from SQLite), POST it to `https://api.github.com/app/installations/<installation_id>/access_tokens`, get back a `ghs_…` token good for ~1 hour. Held in memory only, never written to disk.
 2. **Refresh the working tree to the branch tip.** `git init` if the checkout is missing (the first deploy), then `git fetch` + `git reset --hard`, the same path every time. Every deploy means "deploy the latest commit". The token is passed inline on the fetch command so it never lands in `.git/config`.
-3. `cd /srv/<org>/<name>/repo` and `docker compose up -d --build`. A deploy succeeds when compose exits 0 — boson does not health-probe the app afterwards (a project that wants a health gate defines a compose `healthcheck`).
+3. `cd /srv/<org>/<name>` and `docker compose up -d --build`. A deploy succeeds when compose exits 0 — boson does not health-probe the app afterwards (a project that wants a health gate defines a compose `healthcheck`).
 4. **Activate the webhook** (first successful deploy only): set the project's `webhook_active` flag in SQLite. The daemon checks it per request — nothing else to regenerate.
 
 After this, every push to the project's branch triggers a deploy automatically.
@@ -287,8 +287,8 @@ Tracked in `BOSON_SPEC.md` §21, which is authoritative.
 
 ## Implementation order
 
-1. **`boson init`** — create the `boson` user + unit, bring up the daemon (health endpoint only) and Caddy. No projects. Verify HTTPS works for the admin hostname.
-2. **Caddy admin-API plumbing** — boson can add and remove routes from the running Caddy.
+1. **`boson init`** — create the `boson` user + unit, bring up the daemon (health endpoint only) and Caddy, push the initial config (admin hostname → daemon) over Caddy's admin API. No projects. Verify HTTPS works for the admin hostname.
+2. **Caddy admin-API plumbing** — full-config rebuild from DB state; boson can add and remove project routes from the running Caddy.
 3. **`boson add` (no GitHub App yet)** — accept a public repo, fetch it, add the Caddy hostname route, persist to SQLite. Insert placeholder credentials (the columns are NOT NULL); step 4 replaces this path.
 4. **GitHub App manifest flow** — wire `/_boson/setup-app/*` end-to-end.
 5. **Token minter + private repo cloning** — replace the public-repo stub. JWT signing in-process from the .pem in SQLite.
