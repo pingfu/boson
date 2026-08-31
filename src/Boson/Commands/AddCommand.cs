@@ -11,16 +11,19 @@ public static class AddCommand
     public static Command Create()
     {
         var repoArg = new Argument<string>("org/name") { Description = "GitHub repository" };
+
         var hostnameOpt = new Option<string>("--hostname")
         {
             Description = "Public hostname Caddy fronts for this project",
             Required = true,
         };
+
         var portOpt = new Option<int>("--upstream-port")
         {
             Description = "Host port Caddy reverse-proxies the hostname to (80, 443, 2019 and 9000 are reserved)",
             Required = true,
         };
+
         var branchOpt = new Option<string>("--branch")
         {
             Description = "Branch to deploy",
@@ -28,6 +31,7 @@ public static class AddCommand
         };
 
         var cmd = new Command("add", "Register a project: GitHub App manifest flow, Caddy route, initial fetch");
+        
         cmd.Arguments.Add(repoArg);
         cmd.Options.Add(hostnameOpt);
         cmd.Options.Add(portOpt);
@@ -38,22 +42,24 @@ public static class AddCommand
             parseResult.GetValue(portOpt),
             parseResult.GetValue(branchOpt)!,
             ct));
+
         return cmd;
     }
 
-    public static async Task<int> RunAsync(
-        string repoInput, string hostname, int port, string branch, CancellationToken ct)
+    public static async Task<int> RunAsync(string repoInput, string hostname, int port, string branch, CancellationToken ct)
     {
         if (!RepoName.TryCanonicalise(repoInput, out var repo))
         {
-            Console.Error.WriteLine($"invalid repo (expected org/name): {repoInput}");
+            Console.Error.WriteLine($"invalid repo (expected org/name): {repoInput}");    
             return ExitCodes.UserError;
         }
+
         if (port is < 1 or > 65535)
         {
             Console.Error.WriteLine($"port out of range: {port}");
             return ExitCodes.UserError;
         }
+
         if (ReservedPorts.Contains(port))
         {
             Console.Error.WriteLine(
@@ -62,9 +68,11 @@ public static class AddCommand
         }
 
         var paths = new BosonPaths();
+
         using var rpc = new RpcClient(paths.SocketPath);
 
         RpcResult<AddStartResponse> start;
+        
         try
         {
             start = await rpc.AddAsync(new AddRequest(repo, hostname, port, branch), ct);
@@ -72,12 +80,14 @@ public static class AddCommand
         catch (DaemonUnreachableException e)
         {
             Console.Error.WriteLine(e.Message);
+
             return ExitCodes.RuntimeFailure;
         }
 
         if (start.Body is null)
         {
             Console.Error.WriteLine(start.Error ?? $"add refused ({(int)start.Status})");
+
             return ExitCodes.UserError;
         }
 
@@ -87,16 +97,20 @@ public static class AddCommand
         Console.WriteLine();
         Console.WriteLine("Open this URL to create and install the project's GitHub App:");
         Console.WriteLine($"  {start.Body.SetupUrl}");
+
         if (BrowserLauncher.TryOpen(start.Body.SetupUrl))
             Console.WriteLine("(opened in your browser)");
+        
         Console.WriteLine();
 
         // The daemon owns the flow; this loop only observes it. Ctrl-C here
         // stops the display, not the flow (spec §11).
         string? lastPhase = null;
+
         while (true)
         {
             RpcResult<AddStatusResponse> status;
+
             try
             {
                 status = await rpc.AddStatusAsync(start.Body.Token, ct);
@@ -127,6 +141,7 @@ public static class AddCommand
                     "fetching" => "fetching checkout…",
                     _ => null,
                 };
+
                 if (line is not null) Console.WriteLine($"  {line}");
             }
 
@@ -153,8 +168,10 @@ public static class AddCommand
     {
         Console.WriteLine();
         Console.WriteLine($"✓ {repo} added");
+
         if (fetchFailed)
             Console.WriteLine($"⚠ initial fetch failed: {error} — boson deploy retries it");
+        
         Console.WriteLine();
         Console.WriteLine("Next steps:");
         Console.WriteLine($"  1. If the project's compose needs env, create {paths.ProjectDir(repo)}/.env");

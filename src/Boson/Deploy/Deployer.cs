@@ -38,7 +38,9 @@ public sealed class Deployer(
     BosonPaths paths,
     ILogger logger) : IDeployer
 {
-    public const int MaxPasses = 3;
+    // Spec §6 step 9: the deploy_pending drain is bounded so a push flood can't
+    // hold the project lock indefinitely; a still-set flag is surfaced by `boson list`.
+    internal const int MaxPasses = 3;
 
     private int _active;
 
@@ -58,10 +60,12 @@ public sealed class Deployer(
                 logger.LogInformation("{Repo}: deploy in flight; push coalesced into deploy_pending", repo);
                 return new DeployResult.Coalesced();
             }
+
             return new DeployResult.LockHeld();
         }
 
         Interlocked.Increment(ref _active);
+
         try
         {
             var currentTrigger = trigger;
@@ -72,11 +76,15 @@ public sealed class Deployer(
             while (true)
             {
                 passes++;
+
                 var project = projects.GetByRepo(repo);
+                
                 if (project is null) break; // removed mid-loop
 
                 var deployId = deploys.Insert(project.Id, currentTrigger, paths.DeployLogPath);
+                
                 lastId = deployId;
+                
                 if (passes == 1) onStarted?.Invoke(deployId);
 
                 lastSucceeded = await RunPassAsync(project, deployId, currentTrigger, ct);
@@ -85,13 +93,14 @@ public sealed class Deployer(
                 if (lastSucceeded && !project.WebhookActive)
                 {
                     projects.MarkWebhookActive(repo);
-                    logger.LogInformation(
-                        "{Repo}: first successful deploy; push-to-deploy activated", repo);
+
+                    logger.LogInformation("{Repo}: first successful deploy; push-to-deploy activated", repo);
                 }
 
                 // §6 step 9 — drain deploy_pending while still holding the lock.
                 var fresh = projects.GetByRepo(repo);
                 if (fresh is not { DeployPending: true }) break;
+
                 if (passes >= MaxPasses)
                 {
                     logger.LogWarning(
@@ -99,7 +108,9 @@ public sealed class Deployer(
                         repo, passes);
                     break;
                 }
+
                 projects.SetDeployPending(repo, false);
+                
                 currentTrigger = DeployTrigger.Webhook;
             }
 
@@ -112,24 +123,30 @@ public sealed class Deployer(
         }
     }
 
-    private async Task<bool> RunPassAsync(
-        Project project, long deployId, DeployTrigger trigger, CancellationToken ct)
+    private async Task<bool> RunPassAsync(Project project, long deployId, DeployTrigger trigger, CancellationToken ct)
     {
         var logPath = paths.DeployLogPath(deployId);
+
         Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+        
         await using var logFile = new StreamWriter(new FileStream(
             logPath, FileMode.Create, FileAccess.Write, FileShare.Read))
         { AutoFlush = true };
+        
         var logGate = new object();
+        
         void Log(string line) { lock (logGate) logFile.WriteLine(line); }
 
         var succeeded = false;
+        
         string? error = null;
+        
         try
         {
             Log($"deploy #{deployId}: {project.Repo} branch {project.Branch} ({trigger.AsDbValue()})");
 
             InstallationToken token;
+        
             try
             {
                 token = await minter.MintAsync(project.Repo, ct);
@@ -140,14 +157,17 @@ public sealed class Deployer(
             }
 
             var projectDir = paths.ProjectDir(project.Repo);
-            var sha = await git.FetchAndResetAsync(
-                projectDir, project.Repo, project.Branch, token.Value, Log, ct);
+            var sha = await git.FetchAndResetAsync(projectDir, project.Repo, project.Branch, token.Value, Log, ct);
+
             deploys.SetCommitSha(deployId, sha);
+            
             Log($"HEAD {sha}");
 
             var composeName = RepoName.ComposeProjectName(project.Repo);
             var result = await docker.ComposeUpBuildAsync(composeName, projectDir, Log, ct);
+            
             succeeded = result.Ok;
+            
             if (!succeeded) error = $"docker compose up exited {result.ExitCode}";
         }
         catch (Exception e)
@@ -157,13 +177,16 @@ public sealed class Deployer(
         }
 
         deploys.Finish(deployId, succeeded, error);
+        
         Log(succeeded ? "deploy succeeded" : $"deploy failed: {error}");
+
         return succeeded;
     }
 
     public async Task WaitForIdleAsync(TimeSpan timeout)
     {
         var deadline = DateTimeOffset.UtcNow + timeout;
+        
         while (Volatile.Read(ref _active) > 0 && DateTimeOffset.UtcNow < deadline)
             await Task.Delay(250);
     }

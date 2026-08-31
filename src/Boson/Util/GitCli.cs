@@ -14,8 +14,7 @@ public interface IGitCli
 
 public class GitCli(IProcessRunner runner) : IGitCli
 {
-    protected virtual string BuildFetchUrl(string repo, string token) =>
-        $"https://x-access-token:{token}@github.com/{repo}.git";
+    protected virtual string BuildFetchUrl(string repo, string token) => $"https://x-access-token:{token}@github.com/{repo}.git";
 
     public async Task<string> FetchAndResetAsync(
         string projectDir, string repo, string branch, string token,
@@ -34,32 +33,36 @@ public class GitCli(IProcessRunner runner) : IGitCli
         var refspec = $"+refs/heads/{branch}:refs/remotes/origin/{branch}";
 
         log?.Invoke($"$ git fetch {Redact(fetchUrl, token)} --depth=1 --no-tags {refspec}");
+
         var fetch = await runner.RunAsync(
             "git", ["fetch", fetchUrl, "--depth=1", "--no-tags", refspec],
             projectDir,
             onOutputLine: line => log?.Invoke(Redact(line, token)),
             ct: ct);
+
         if (!fetch.Ok)
             throw new GitException($"git fetch failed: {Redact(fetch.StdErr.Trim(), token)}");
 
         log?.Invoke($"$ git reset --hard refs/remotes/origin/{branch}");
+
         var reset = await runner.RunAsync(
             "git", ["reset", "--hard", $"refs/remotes/origin/{branch}"],
             projectDir,
             onOutputLine: line => log?.Invoke(line),
             ct: ct);
+
         if (!reset.Ok)
             throw new GitException($"git reset failed: {reset.StdErr.Trim()}");
 
         var head = await runner.RunAsync("git", ["rev-parse", "HEAD"], projectDir, ct: ct);
+
         if (!head.Ok)
             throw new GitException($"git rev-parse failed: {head.StdErr.Trim()}");
 
         return head.StdOut.Trim();
     }
 
-    private static string Redact(string text, string token) =>
-        token.Length == 0 ? text : text.Replace(token, "***");
+    private static string Redact(string text, string token) => token.Length == 0 ? text : text.Replace(token, "***");
 }
 
 public sealed class GitException(string message) : Exception(message);

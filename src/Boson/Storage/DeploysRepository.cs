@@ -24,15 +24,22 @@ public interface IDeploysRepository
 public sealed class DeploysRepository(Db db) : IDeploysRepository
 {
     private const string Columns = """
-        id AS Id, project_id AS ProjectId, "trigger" AS Trigger, commit_sha AS CommitSha,
-        started_at AS StartedAt, finished_at AS FinishedAt, status AS Status,
-        log_path AS LogPath, error AS Error
+        id AS Id, 
+        project_id AS ProjectId, 
+        "trigger" AS Trigger, 
+        commit_sha AS CommitSha,
+        started_at AS StartedAt, 
+        finished_at AS FinishedAt, 
+        status AS Status,
+        log_path AS LogPath, 
+        error AS Error
         """;
 
     public long Insert(long projectId, DeployTrigger trigger, Func<long, string> logPathFor)
     {
         using var conn = db.Open();
         using var tx = conn.BeginTransaction();
+
         var id = conn.ExecuteScalar<long>("""
             INSERT INTO deploys(project_id, "trigger", log_path)
             VALUES (@projectId, @trigger, '');
@@ -58,12 +65,18 @@ public sealed class DeploysRepository(Db db) : IDeploysRepository
             UPDATE deploys
             SET status = @status, finished_at = datetime('now'), error = @error
             WHERE id = @deployId
-            """, new { deployId, status = succeeded ? "succeeded" : "failed", error });
+            """, new
+            {
+                deployId,
+                status = (succeeded ? DeployStatus.Succeeded : DeployStatus.Failed).AsDbValue(),
+                error,
+            });
     }
 
     public DeployRow? Get(long deployId)
     {
         using var conn = db.Open();
+
         return conn.QuerySingleOrDefault<DeployRow>(
             $"SELECT {Columns} FROM deploys WHERE id = @deployId", new { deployId });
     }
@@ -71,6 +84,7 @@ public sealed class DeploysRepository(Db db) : IDeploysRepository
     public DeployRow? GetLatestForProject(long projectId)
     {
         using var conn = db.Open();
+
         return conn.QueryFirstOrDefault<DeployRow>(
             $"""
             SELECT {Columns} FROM deploys WHERE project_id = @projectId
@@ -81,6 +95,7 @@ public sealed class DeploysRepository(Db db) : IDeploysRepository
     public IReadOnlyList<DeployRow> ListForProject(long projectId)
     {
         using var conn = db.Open();
+
         return conn.Query<DeployRow>(
             $"SELECT {Columns} FROM deploys WHERE project_id = @projectId ORDER BY id",
             new { projectId }).ToList();
@@ -89,6 +104,7 @@ public sealed class DeploysRepository(Db db) : IDeploysRepository
     public int MarkAllRunningAsFailed(string error)
     {
         using var conn = db.Open();
+        
         return conn.Execute("""
             UPDATE deploys
             SET status = 'failed', finished_at = datetime('now'), error = @error

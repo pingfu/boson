@@ -12,8 +12,10 @@ public static class ListCommand
     {
         var jsonOpt = new Option<bool>("--json") { Description = "Machine-readable output" };
         var cmd = new Command("list", "All projects: status, containers, last deploy");
+
         cmd.Options.Add(jsonOpt);
         cmd.SetAction((parseResult, ct) => RunAsync(parseResult.GetValue(jsonOpt), ct));
+        
         return cmd;
     }
 
@@ -21,11 +23,13 @@ public static class ListCommand
     {
         var paths = new BosonPaths();
         var db = new Db(paths.DbPath);
+        
         if (!db.Exists())
         {
             Console.Error.WriteLine("no boson database found — run boson init first");
             return ExitCodes.UserError;
         }
+
         new Migrator(db).CheckCompatibility();
 
         var projects = new ProjectsRepository(db);
@@ -33,21 +37,25 @@ public static class ListCommand
         var docker = new DockerCli(new ProcessRunner());
 
         var rows = new List<ProjectListEntry>();
+
         foreach (var p in projects.ListActive())
         {
             var ps = await docker.ComposePsAsync(RepoName.ComposeProjectName(p.Repo), ct);
             var containers = ps.Ok ? SummariseComposePs(ps.StdOut) : "unavailable";
             var last = deploys.GetLatestForProject(p.Id);
+
             rows.Add(new ProjectListEntry(
                 p.Repo, p.Hostname, p.UpstreamPort, p.Branch, p.WebhookActive,
                 containers,
                 last is null
                     ? null
-                    : new LastDeployEntry(last.Id, last.Status, last.CommitSha, last.StartedAt,
+                    : new LastDeployEntry(last.Id, last.Status.AsDbValue(), last.CommitSha, last.StartedAt,
                         last.FinishedAt, last.LogPath, last.Error),
+
                 // A pending flag with nothing running means a redeploy was dropped (spec §4).
-                DeployPendingIdle: p.DeployPending && last?.Status != "running"));
+                DeployPendingIdle: p.DeployPending && last?.Status != DeployStatus.Running));
         }
+
         await DbOwnership.ChownToBosonAsync(new ProcessRunner(), paths.DbPath);
 
         if (json)
@@ -57,6 +65,7 @@ public static class ListCommand
                 WriteIndented = true,
                 PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             }));
+
             return ExitCodes.Success;
         }
 
@@ -67,6 +76,7 @@ public static class ListCommand
         }
 
         var table = new Table().Border(TableBorder.Rounded);
+
         table.AddColumn("repo");
         table.AddColumn("hostname");
         table.AddColumn("port");
@@ -74,12 +84,14 @@ public static class ListCommand
         table.AddColumn("webhook");
         table.AddColumn("containers");
         table.AddColumn("last deploy");
+
         foreach (var r in rows)
         {
             var lastText = r.LastDeploy is null
                 ? "never"
                 : $"#{r.LastDeploy.Id} {r.LastDeploy.Status} " +
                   $"{Shorten(r.LastDeploy.CommitSha)} {r.LastDeploy.FinishedAt ?? r.LastDeploy.StartedAt}";
+
             table.AddRow(
                 Markup.Escape(r.Repo),
                 Markup.Escape(r.Hostname),
@@ -89,6 +101,7 @@ public static class ListCommand
                 Markup.Escape(r.Containers),
                 Markup.Escape(lastText));
         }
+
         AnsiConsole.Write(table);
 
         foreach (var r in rows.Where(r => r.DeployPendingIdle))
@@ -101,10 +114,13 @@ public static class ListCommand
     internal static string SummariseComposePs(string stdout)
     {
         var states = new List<string>();
+
         try
         {
             var text = stdout.Trim();
+
             if (text.Length == 0) return "none";
+            
             if (text.StartsWith('['))
             {
                 using var doc = JsonDocument.Parse(text);
@@ -124,7 +140,9 @@ public static class ListCommand
         {
             return "unknown";
         }
+
         if (states.Count == 0) return "none";
+        
         return string.Join(", ", states
             .GroupBy(s => s)
             .OrderBy(g => g.Key)

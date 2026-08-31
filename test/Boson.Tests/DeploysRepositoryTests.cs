@@ -24,8 +24,8 @@ public class DeploysRepositoryTests
         var row = deploys.Get(id)!;
 
         Assert.Equal($"/var/log/boson/deploys/{id}.log", row.LogPath);
-        Assert.Equal("webhook", row.Trigger);
-        Assert.Equal("running", row.Status);
+        Assert.Equal(DeployTrigger.Webhook, row.Trigger);
+        Assert.Equal(DeployStatus.Running, row.Status);
         Assert.Null(row.FinishedAt);
     }
 
@@ -41,7 +41,7 @@ public class DeploysRepositoryTests
         deploys.Finish(id, succeeded: false, error: "docker compose up exited 1");
 
         var row = deploys.Get(id)!;
-        Assert.Equal("failed", row.Status);
+        Assert.Equal(DeployStatus.Failed, row.Status);
         Assert.Equal("abc123", row.CommitSha);
         Assert.Equal("docker compose up exited 1", row.Error);
         Assert.NotNull(row.FinishedAt);
@@ -73,9 +73,9 @@ public class DeploysRepositoryTests
         var recovered = deploys.MarkAllRunningAsFailed("daemon restart");
 
         Assert.Equal(1, recovered);
-        Assert.Equal("succeeded", deploys.Get(finished)!.Status);
+        Assert.Equal(DeployStatus.Succeeded, deploys.Get(finished)!.Status);
         var orphanRow = deploys.Get(orphan)!;
-        Assert.Equal("failed", orphanRow.Status);
+        Assert.Equal(DeployStatus.Failed, orphanRow.Status);
         Assert.Equal("daemon restart", orphanRow.Error);
     }
 }

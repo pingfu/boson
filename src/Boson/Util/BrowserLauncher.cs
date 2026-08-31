@@ -17,11 +17,13 @@ public static class BrowserLauncher
                 Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
                 return true;
             }
+
             if (OperatingSystem.IsMacOS())
             {
                 Process.Start("open", url);
                 return true;
             }
+
             if (OperatingSystem.IsLinux())
             {
                 var p = Process.Start(new ProcessStartInfo("xdg-open", url)
@@ -29,12 +31,14 @@ public static class BrowserLauncher
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                 });
+
                 return p is not null;
             }
         }
         catch
         {
         }
+        
         return false;
     }
 }

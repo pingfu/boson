@@ -23,11 +23,14 @@ public sealed class CaddySynchroniser(
     public async Task SyncAsync(CancellationToken ct = default)
     {
         await _gate.WaitAsync(ct);
+
         try
         {
             var admin = platform.Get(PlatformRepository.AdminHostname)
                 ?? throw new InvalidOperationException("admin_hostname not set; run boson init");
+        
             using var cfg = builder.Build(projects.ListActive(), admin);
+        
             await client.LoadConfigAsync(cfg, ct);
         }
         finally

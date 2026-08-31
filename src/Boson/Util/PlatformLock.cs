@@ -13,10 +13,11 @@ public sealed class PlatformLock : IDisposable
     public static PlatformLock? TryAcquire(string lockPath)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(lockPath)!);
+
         try
         {
-            var stream = new FileStream(
-                lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            var stream = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            
             return new PlatformLock(stream);
         }
         catch (IOException)

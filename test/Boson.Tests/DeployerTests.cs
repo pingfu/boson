@@ -77,8 +77,8 @@ public class DeployerTests : IDisposable
         Assert.Equal(completed.LastDeployId, startedId);
 
         var row = _deploys.Get(completed.LastDeployId)!;
-        Assert.Equal("succeeded", row.Status);
-        Assert.Equal("manual", row.Trigger);
+        Assert.Equal(DeployStatus.Succeeded, row.Status);
+        Assert.Equal(DeployTrigger.Manual, row.Trigger);
         Assert.NotNull(row.CommitSha);
         Assert.NotNull(row.FinishedAt);
         Assert.True(File.Exists(row.LogPath));
@@ -95,7 +95,7 @@ public class DeployerTests : IDisposable
         var completed = Assert.IsType<DeployResult.Completed>(result);
         Assert.False(completed.Succeeded);
         var row = _deploys.Get(completed.LastDeployId)!;
-        Assert.Equal("failed", row.Status);
+        Assert.Equal(DeployStatus.Failed, row.Status);
         Assert.Contains("docker compose up exited 1", row.Error);
         Assert.False(_projects.GetByRepo(Repo)!.WebhookActive);
     }
@@ -127,8 +127,8 @@ public class DeployerTests : IDisposable
         Assert.Equal(2, completed.Passes);
         var rows = _deploys.ListForProject(_projects.GetByRepo(Repo)!.Id);
         Assert.Equal(2, rows.Count);
-        Assert.Equal("manual", rows[0].Trigger);
-        Assert.Equal("webhook", rows[1].Trigger);
+        Assert.Equal(DeployTrigger.Manual, rows[0].Trigger);
+        Assert.Equal(DeployTrigger.Webhook, rows[1].Trigger);
         Assert.False(_projects.GetByRepo(Repo)!.DeployPending);
     }
 

@@ -17,15 +17,19 @@ public sealed class Db(string dbPath)
             DataSource = DbPath,
             Mode = SqliteOpenMode.ReadWriteCreate,
         }.ToString());
+
         conn.Open();
 
         using var cmd = conn.CreateCommand();
+
         cmd.CommandText = """
             PRAGMA journal_mode = WAL;
             PRAGMA foreign_keys = ON;
             PRAGMA busy_timeout = 5000;
             """;
+            
         cmd.ExecuteNonQuery();
+
         return conn;
     }
 

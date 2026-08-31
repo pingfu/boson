@@ -32,6 +32,7 @@ public sealed class DnsResolver : IDnsResolver
                 .SelectMany(n => n.GetIPProperties().UnicastAddresses)
                 .Select(u => u.Address)
                 .ToHashSet();
+                
             return addresses.Any(local.Contains);
         }
         catch (NetworkInformationException)

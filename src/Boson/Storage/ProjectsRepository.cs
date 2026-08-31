@@ -18,12 +18,21 @@ public interface IProjectsRepository
 public sealed class ProjectsRepository(Db db) : IProjectsRepository
 {
     private const string Columns = """
-        id AS Id, repo AS Repo, hostname AS Hostname, upstream_port AS UpstreamPort,
-        branch AS Branch, github_app_id AS GithubAppId, github_app_slug AS GithubAppSlug,
+        id AS Id, 
+        repo AS Repo, 
+        hostname AS Hostname, 
+        upstream_port AS UpstreamPort,
+        branch AS Branch, 
+        github_app_id AS GithubAppId, 
+        github_app_slug AS GithubAppSlug,
         github_installation_id AS GithubInstallationId,
-        github_webhook_secret AS GithubWebhookSecret, github_app_pem AS GithubAppPem,
-        webhook_active AS WebhookActive, deploy_pending AS DeployPending,
-        created_at AS CreatedAt, updated_at AS UpdatedAt, archived_at AS ArchivedAt
+        github_webhook_secret AS GithubWebhookSecret, 
+        github_app_pem AS GithubAppPem,
+        webhook_active AS WebhookActive, 
+        deploy_pending AS DeployPending,
+        created_at AS CreatedAt, 
+        updated_at AS UpdatedAt, 
+        archived_at AS ArchivedAt
         """;
 
     public Project? GetByRepo(string repo)

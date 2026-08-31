@@ -38,6 +38,7 @@ public sealed class ProcessRunner : IProcessRunner
             RedirectStandardInput = stdin is not null,
             UseShellExecute = false,
         };
+        
         foreach (var a in args) psi.ArgumentList.Add(a);
 
         using var process = new Process { StartInfo = psi };
