@@ -10,6 +10,7 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <PublishTrimmed>true</PublishTrimmed>
     <TrimMode>partial</TrimMode>
+    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
     <!-- Native deps (e_sqlite3) ship beside the binary otherwise, and a
          single-file distribution silently loses them. -->
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
@@ -35,6 +36,12 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Resources\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Dapper and System.Text.Json reach our models and RPC records purely by
+         reflection, which the trimmer cannot see. -->
+    <TrimmerRootAssembly Include="boson" />
   </ItemGroup>
 
   <ItemGroup>

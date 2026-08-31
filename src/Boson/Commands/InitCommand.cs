@@ -139,8 +139,11 @@ public static class InitCommand
 
         if (!await PollAsync(() => HealthOkAsync(ct), TimeSpan.FromSeconds(10)))
         {
+            // Say what actually went wrong: a listening daemon answering 500 and
+            // one that never bound the port are entirely different problems.
             Console.Error.WriteLine(
-                "daemon did not become healthy within 10s — diagnose with: journalctl -u boson");
+                $"daemon did not become healthy within 10s: {await DescribeHealthFailureAsync(ct)}");
+            Console.Error.WriteLine("diagnose with: journalctl -u boson");
             return ExitCodes.RuntimeFailure;
         }
 
@@ -216,6 +219,26 @@ public static class InitCommand
             return false;
         }
     }
+
+    private static async Task<string> DescribeHealthFailureAsync(CancellationToken ct)
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+        try
+        {
+            var response = await http.GetAsync(
+                $"http://127.0.0.1:{CaddyConfigBuilder.DaemonPort}/_boson/health", ct);
+            var body = (await response.Content.ReadAsStringAsync(ct)).Trim();
+            return $"HTTP {(int)response.StatusCode} from /_boson/health" +
+                   (body.Length == 0 ? "" : $": {Truncate(body, 300)}");
+        }
+        catch (Exception e)
+        {
+            return $"{e.GetType().Name}: {e.Message}";
+        }
+    }
+
+    private static string Truncate(string text, int max) =>
+        text.Length <= max ? text : text[..max] + "…";
 
     private static async Task<bool> PollAsync(Func<Task<bool>> check, TimeSpan timeout)
     {
