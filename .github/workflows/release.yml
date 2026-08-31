@@ -2,10 +2,27 @@ name: release
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+
+env:
+  VERSION: 0.1.${{ github.run_number }}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet test Boson.sln -c Release
+
   build:
+    needs: test
     strategy:
       matrix:
         include:
@@ -25,7 +42,7 @@ jobs:
           --self-contained true
           /p:PublishSingleFile=true
           /p:DebugType=embedded
-          /p:Version=${{ github.ref_name }}
+          /p:Version=${{ env.VERSION }}
           -o publish
       - uses: actions/upload-artifact@v4
         with:
@@ -41,5 +58,7 @@ jobs:
       - uses: actions/download-artifact@v4
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
           files: '**/boson*'
           generate_release_notes: true
