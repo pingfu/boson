@@ -9,7 +9,8 @@ public static class TestProjects
         string hostname = "site.example.com",
         int port = 8080,
         string branch = "main",
-        string secret = "s3cret") => new()
+        string secret = "s3cret",
+        string? pem = null) => new()
     {
         Repo = repo,
         Hostname = hostname,
@@ -19,6 +20,7 @@ public static class TestProjects
         GithubAppSlug = "boson-site",
         GithubInstallationId = 5678,
         GithubWebhookSecret = secret,
-        GithubAppPem = "-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----",
+        // Most tests never parse this; pass a real key when the code under test does.
+        GithubAppPem = pem ?? "-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----",
     };
 }

@@ -84,6 +84,7 @@ public sealed class FakeGithubClient : IGithubClient
         42, "boson-site", "-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----", "whsec_test");
     public bool FailConversion;
     public string? LastCode;
+    public string? LastJwt;
 
     public Task<ManifestConversion> ConvertManifestAsync(string code, CancellationToken ct = default)
     {
@@ -94,8 +95,11 @@ public sealed class FakeGithubClient : IGithubClient
     }
 
     public Task<InstallationToken> CreateInstallationTokenAsync(
-        string jwt, long installationId, CancellationToken ct = default) =>
-        Task.FromResult(new InstallationToken("ghs_test", DateTimeOffset.UtcNow.AddHours(1)));
+        string jwt, long installationId, CancellationToken ct = default)
+    {
+        LastJwt = jwt;
+        return Task.FromResult(new InstallationToken("ghs_test", DateTimeOffset.UtcNow.AddHours(1)));
+    }
 }
 
 public sealed class FakeCaddySynchroniser : ICaddySynchroniser

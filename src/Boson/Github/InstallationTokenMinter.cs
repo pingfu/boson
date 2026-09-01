@@ -32,8 +32,20 @@ public sealed class InstallationTokenMinter(
         {
             rsa.ImportFromPem(project.GithubAppPem);
             var now = DateTimeOffset.UtcNow;
-            var header = new JwtHeader(new SigningCredentials(
-                new RsaSecurityKey(rsa), SecurityAlgorithms.RsaSha256));
+
+            // CryptoProviderFactory.Default caches SignatureProviders keyed on the
+            // key material, and that cache outlives this using-block. Left alone, the
+            // second mint of a given App's PEM in one daemon process gets handed the
+            // first mint's provider - whose RSA is long disposed - and throws
+            // ObjectDisposedException. Opt out of the cache: the RSA dies here, so
+            // nothing may outlive it. The per-call KeyId keeps a lookup from matching
+            // an earlier mint even if some other factory is consulted.
+            var key = new RsaSecurityKey(rsa) { KeyId = Guid.NewGuid().ToString("n") };
+            var credentials = new SigningCredentials(key, SecurityAlgorithms.RsaSha256)
+            {
+                CryptoProviderFactory = new CryptoProviderFactory { CacheSignatureProviders = false },
+            };
+            var header = new JwtHeader(credentials);
             var payload = new JwtPayload
             {
                 // iat backdated 60s for clock skew; exp inside GitHub's 10-minute cap (spec §13).

@@ -149,17 +149,30 @@ public sealed class DaemonHost(BosonPaths paths, int port)
 
         WebhookEndpoint.Map(app, projects, locks, deployer, log);
 
+        // These three are the only record of a setup flow's progress: the
+        // pending entries are in-memory, so a 404 here is otherwise invisible.
         app.MapGet("/_boson/setup-app/start", (string? state) =>
         {
             var html = orchestrator.RenderStartPage(state ?? "");
+            log.LogInformation("setup-app/start: state={State} {Outcome}",
+                Describe(state), html is null ? "404 no live setup for this token" : "200");
             return html is null ? Results.NotFound() : Results.Content(html, "text/html");
         });
 
         app.MapGet("/_boson/setup-app/callback", async (string? code, string? state) =>
         {
             if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state))
+            {
+                log.LogWarning("setup-app/callback: 404 missing code or state");
                 return Results.NotFound();
+            }
+
             var redirect = await orchestrator.HandleCallbackAsync(state, code);
+            log.LogInformation("setup-app/callback: state={State} {Outcome}",
+                Describe(state),
+                redirect is null
+                    ? "404 no live setup for this token (expired, already used, or the daemon restarted)"
+                    : "302 to GitHub install");
             return redirect is null ? Results.NotFound() : Results.Redirect(redirect);
         });
 
@@ -167,14 +180,28 @@ public sealed class DaemonHost(BosonPaths paths, int port)
         {
             var state = ctx.Request.Query["state"].ToString();
             if (!long.TryParse(ctx.Request.Query["installation_id"], out var installationId))
+            {
+                log.LogWarning("setup-app/installed: 404 missing installation_id");
                 return Results.NotFound();
-            return orchestrator.HandleInstalled(state, installationId)
+            }
+
+            var accepted = orchestrator.HandleInstalled(state, installationId);
+            log.LogInformation("setup-app/installed: state={State} installation={Installation} {Outcome}",
+                Describe(state), installationId,
+                accepted ? "200 finalising" : "404 no live setup for this token");
+            return accepted
                 ? Results.Content(EmbeddedResources.ManifestSuccessHtml, "text/html")
                 : Results.NotFound();
         });
 
         return app;
     }
+
+    /// <summary>Enough of a state token to correlate log lines, not enough to replay one.</summary>
+    private static string Describe(string? state) =>
+        string.IsNullOrEmpty(state) ? "(none)"
+            : state.Length <= 8 ? state
+            : state[..8] + "…";
 
     private WebApplication BuildRpcApp(
         IProjectsRepository projects,
