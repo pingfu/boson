@@ -21,7 +21,7 @@ boson init deploy.example.com        # boson's own hostname
 
 Every project you add brings a second kind of hostname, its own public one, and that is where GitHub delivers its webhooks. Those need public A records pointing at this server, with ports 80 and 443 free on the host and reachable from the internet.
 
-`init` verifies the software requirements (Docker with the compose v2 plugin, `git`, systemd, root), then installs the platform. TLS certificates are provisioned and renewed automatically, here and for each project hostname you add. Confirm the install by opening `https://deploy.example.com/_boson/health`: a 200 proves DNS, reachability and TLS end to end.
+`init` verifies the software requirements (Docker with the compose v2 plugin, `git`, systemd, root), then installs the platform. TLS certificates are provisioned and renewed automatically, here and for each project hostname you add, and plain HTTP redirects to HTTPS. Confirm the install by opening `https://deploy.example.com/_boson/health`: a 200 proves DNS, reachability and TLS end to end.
 
 ## Prepare your project
 
@@ -37,6 +37,8 @@ services:
 ```
 
 boson picks the host port when you add the project, and sets `BOSON_HOST_PORT` for every `docker compose` it runs. Your repo names only the port your app listens on inside the container, `8080` here, so the same repo deploys to any boson server without carrying a number that's true on one machine. A deploy whose compose file publishes some other host port fails before it builds, and says which port boson expected.
+
+Running compose by hand in a checkout needs the variable too, with the port from `boson status`: `BOSON_HOST_PORT=30000 docker compose up -d`.
 
 Four ports belong to the platform, and boson allocates from 30000-32767:
 
@@ -102,7 +104,7 @@ Exit codes: `0` success · `1` user error · `2` runtime failure · `3` deploy a
 
 `https://deploy.example.com/_boson/health` returns the running version. When it doesn't answer, `systemctl status boson` says why.
 
-`boson status` reports the daemon's version and the admin hostname, then hostname, branch, webhook, container states and last deploy for each project.
+`boson status` reports the daemon's version and the admin URL, then hostname, branch, host port, webhook, container states and last deploy for each project.
 
 For everything else, the usual tools work: `docker logs` for container output, `journalctl -u boson` for the daemon, `/var/log/boson/deploys/` for per-deploy build output.
 

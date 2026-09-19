@@ -81,7 +81,7 @@ public static class StatusCommand
         }
 
         AnsiConsole.MarkupLine($"boson version   [grey]{Markup.Escape(DescribeDaemon(daemon, now))}[/]");
-        AnsiConsole.MarkupLine($"admin hostname  [grey]{Markup.Escape(adminHostname ?? "unset")}[/]");
+        AnsiConsole.MarkupLine($"admin url       [grey]{Markup.Escape(AdminUrl(adminHostname))}[/]");
         AnsiConsole.WriteLine();
 
         if (rows.Count == 0)
@@ -182,6 +182,13 @@ public static class StatusCommand
 
         return text;
     }
+
+    /// <summary>
+    /// The control plane's address as something to open. Caddy serves it on 443
+    /// like every other hostname, so the port stays implicit.
+    /// </summary>
+    internal static string AdminUrl(string? adminHostname) =>
+        string.IsNullOrWhiteSpace(adminHostname) ? "unset" : $"https://{adminHostname}";
 
     /// <summary>Renders a stored timestamp with its age, so "is this stale" reads off the table.</summary>
     internal static string Timestamp(string? dbTime, DateTimeOffset now)
