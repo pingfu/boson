@@ -11,7 +11,7 @@ namespace Boson.Deploy;
 /// </summary>
 public static class ComposePorts
 {
-    public const string HostPortVariable = "BOSON_HOST_PORT";
+    private const string HostPortVariable = ComposeVariables.HostPortVariable;
 
     /// <summary>The problem with what this config publishes, or null when it is right.</summary>
     public static string? Problem(string composeConfigJson, int allocatedPort)

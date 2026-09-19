@@ -1,0 +1,19 @@
+namespace Boson.Deploy;
+
+/// <summary>
+/// What boson supplies to every `docker compose` it runs for a project.
+/// Supplied per invocation rather than written into the checkout: the values
+/// live in boson's own state, so a `git reset --hard`, a re-clone or a purge
+/// cannot disagree with them, and a secret never enters a git working tree.
+/// </summary>
+public sealed record ComposeVariables(int HostPort, string EnvFilePath)
+{
+    public const string HostPortVariable = "BOSON_HOST_PORT";
+    public const string EnvFileVariable = "BOSON_ENV_FILE";
+
+    public Dictionary<string, string> ToEnvironment() => new()
+    {
+        [HostPortVariable] = HostPort.ToString(),
+        [EnvFileVariable] = EnvFilePath,
+    };
+}

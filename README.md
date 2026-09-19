@@ -25,7 +25,18 @@ Every project you add brings a second kind of hostname, its own public one, and 
 
 ## Prepare your project
 
-Your repo needs a `docker-compose.yml` at its root whose web-facing service publishes to loopback on `${BOSON_HOST_PORT}`:
+Your repo needs two files at its root. A `_boson.yml` saying what to deploy where:
+
+```yaml
+version: 1
+
+deployments:
+  - branch: main
+    hostname: example.org
+    env: production
+```
+
+and a `docker-compose.yml` whose web-facing service publishes to loopback on `${BOSON_HOST_PORT}`:
 
 ```yaml
 services:
@@ -33,12 +44,22 @@ services:
     build: .
     ports:
       - "127.0.0.1:${BOSON_HOST_PORT}:8080"   # boson's port : your app's port
-    env_file: .env                            # if your app takes env vars
+    env_file: ${BOSON_ENV_FILE}               # if your app takes env vars
 ```
+
+That pair is the whole contract. One repo can serve several hostnames, deploy more than one branch, and give each pull request a hostname of its own: [BOSON_YML.md](BOSON_YML.md) covers the format.
+
+`env: production` names a set of environment variables that lives on the server and never in the repo. You create the file after `boson add` and before the first deploy, at `/var/lib/boson/env/<org>/<name>/production`, and boson passes it to compose as `$BOSON_ENV_FILE`. Nothing is written into the checkout, so `git reset --hard` on each deploy cannot touch it, and a `--purge` cannot take it. Commit a template (`.env.example`) so the shape is in the repo and the values aren't. Different branches can name different sets, which is what keeps a preview branch off the production credentials.
 
 boson picks the host port when you add the project, and sets `BOSON_HOST_PORT` for every `docker compose` it runs. Your repo names only the port your app listens on inside the container, `8080` here, so the same repo deploys to any boson server without carrying a number that's true on one machine. A deploy whose compose file publishes some other host port fails before it builds, and says which port boson expected.
 
-Running compose by hand in a checkout needs the variable too, with the port from `boson status`: `BOSON_HOST_PORT=30000 docker compose up -d`.
+Running compose by hand in a checkout needs both variables, with the port from `boson status`:
+
+```bash
+BOSON_HOST_PORT=30000 \
+BOSON_ENV_FILE=/var/lib/boson/env/org/my-app/production \
+  docker compose up -d
+```
 
 Four ports belong to the platform, and boson allocates from 30000-32767:
 
@@ -49,7 +70,7 @@ Four ports belong to the platform, and boson allocates from 30000-32767:
 | 2019 | 127.0.0.1 | how boson tells Caddy which hostname goes to which container |
 | 9000 | 127.0.0.1 | boson itself, which Caddy hands GitHub's push notifications and the setup pages |
 
-Caddy proxies the public hostname to that loopback port. The whole hostname maps to your container: boson reserves one path on it, `/_boson/webhook/`, where GitHub posts. If your app takes env vars, reference `.env`, commit a template (`.env.example`) and gitignore the real file: the admin creates `.env` on the server after `boson add`.
+Caddy proxies the public hostname to that loopback port. The whole hostname maps to your container: boson reserves one path on it, `/_boson/webhook/`, where GitHub posts.
 
 ## Add a project
 
@@ -65,7 +86,15 @@ Projects are referenced by repo name in every later command (`boson deploy org/m
 
 Ctrl-C stops the progress display, not the add: complete the browser steps and the project is added anyway (`boson status` shows it). Abandon the browser instead and nothing was saved; re-run the same command to start over.
 
-`add` fetches the code but doesn't deploy, so you can set up secrets first: if your compose needs env vars, create `/srv/org/my-app/.env` (start from the repo's `.env.example`). Then run `boson deploy org/my-app`: the first successful deploy switches on push-to-deploy.
+`add` fetches the code but doesn't deploy, so you can set up secrets first. It reads the repo's `_boson.yml` and prints the environment sets it names, one path per set:
+
+```bash
+mkdir -p /var/lib/boson/env/org/my-app
+cp /srv/org/my-app/.env.example /var/lib/boson/env/org/my-app/production
+$EDITOR /var/lib/boson/env/org/my-app/production
+```
+
+Then `boson deploy org/my-app`: the first successful deploy switches on push-to-deploy. A deploy whose set doesn't exist fails naming the path, so a missing secret is never a half-started container.
 
 ## Deploy
 

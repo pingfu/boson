@@ -175,11 +175,40 @@ public sealed class Deployer(
 
             var composeName = RepoName.ComposeProjectName(project.Repo);
 
+            // Read from the branch just fetched, so a branch is the authority on
+            // its own deployment. A file that cannot be honoured stops the
+            // deploy here rather than producing containers nobody asked for.
+            var declared = BosonFile.Find(projectDir, out var fileProblem);
+
+            if (fileProblem is not null) throw new DeployStepException(fileProblem);
+
+            var entry = declared?.Match(project.Branch);
+
+            if (declared is not null && entry is null)
+                Log($"{BosonFile.FileName} declares no deployment for {project.Branch}");
+
+            var envSet = entry?.Env ?? BosonPaths.DefaultEnvSet;
+            var envFile = paths.EnvFile(project.Repo, envSet);
+
+            Log($"env set {envSet} ({envFile})");
+
+            // Only when the file asks for one by name: a project that declares
+            // no set needs no file, and compose never reads the path.
+            if (entry?.Env is not null && !File.Exists(envFile))
+                throw new DeployStepException(
+                    $"{BosonFile.FileName} names env set {envSet} for {project.Branch}, " +
+                    $"and {envFile} does not exist");
+
+            if (entry is not null && entry.Hostname != project.Hostname)
+                Log($"{BosonFile.FileName} declares hostname {entry.Hostname}, " +
+                    $"and this project serves {project.Hostname}");
+
+            var variables = new ComposeVariables(project.UpstreamPort, envFile);
+
             // Before the build, not after: a compose file publishing the wrong
             // port builds perfectly and then serves nothing, and the 502 that
             // follows says nothing about why.
-            var config = await docker.ComposeConfigAsync(
-                composeName, projectDir, project.UpstreamPort, ct);
+            var config = await docker.ComposeConfigAsync(composeName, projectDir, variables, ct);
 
             if (!config.Ok)
                 throw new DeployStepException($"docker compose config: {config.StdErr.Trim()}");
@@ -188,7 +217,7 @@ public sealed class Deployer(
                 throw new DeployStepException(problem);
 
             var result = await docker.ComposeUpBuildAsync(
-                composeName, projectDir, project.UpstreamPort, Log, ct);
+                composeName, projectDir, variables, Log, ct);
             
             succeeded = result.Ok;
             

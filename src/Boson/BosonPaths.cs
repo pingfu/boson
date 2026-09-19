@@ -41,5 +41,23 @@ public sealed class BosonPaths
         return Path.Combine(SrvDir, org, name);
     }
 
+    /// <summary>
+    /// A project's environment sets, kept here rather than in the checkout:
+    /// the checkout is git's to rewrite, and a `git reset --hard`, a re-clone
+    /// or a purge would take a secret with it. The daemon hands the path to
+    /// compose, so nothing is copied into the working tree either.
+    /// </summary>
+    public string EnvDir(string repo)
+    {
+        var (org, name) = RepoName.Split(repo);
+
+        return Path.Combine(DataDir, "env", org, name);
+    }
+
+    public string EnvFile(string repo, string set = DefaultEnvSet) =>
+        Path.Combine(EnvDir(repo), set);
+
+    public const string DefaultEnvSet = "default";
+
     public string DeployLogPath(long deployId) => Path.Combine(DeployLogsDir, $"{deployId}.log");
 }

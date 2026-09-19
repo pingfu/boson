@@ -34,7 +34,7 @@ public sealed class FakeDockerCli : IDockerCli
     public int UpCalls;
     public readonly List<string> DownedProjects = [];
     public string PsStdOut = "";
-    public readonly List<int> HostPortsPassed = [];
+    public readonly List<ComposeVariables> VariablesPassed = [];
 
     /// <summary>What `compose config` reports; the default publishes whatever port it is asked for.</summary>
     public Func<int, string> ConfigStdOut { get; set; } = hostPort =>
@@ -51,18 +51,19 @@ public sealed class FakeDockerCli : IDockerCli
         Task.FromResult(new ProcessResult(0, "2.27.0", ""));
 
     public Task<ProcessResult> ComposeUpBuildAsync(
-        string projectName, string workingDirectory, int hostPort,
+        string projectName, string workingDirectory, ComposeVariables variables,
         Action<string>? log = null, CancellationToken ct = default)
     {
         Interlocked.Increment(ref UpCalls);
-        lock (HostPortsPassed) HostPortsPassed.Add(hostPort);
+        lock (VariablesPassed) VariablesPassed.Add(variables);
         log?.Invoke($"fake compose up {projectName}");
         return Task.FromResult(new ProcessResult(UpExitCode, "", UpExitCode == 0 ? "" : "build failed"));
     }
 
     public Task<ProcessResult> ComposeConfigAsync(
-        string projectName, string workingDirectory, int hostPort, CancellationToken ct = default) =>
-        Task.FromResult(new ProcessResult(0, ConfigStdOut(hostPort), ""));
+        string projectName, string workingDirectory, ComposeVariables variables,
+        CancellationToken ct = default) =>
+        Task.FromResult(new ProcessResult(0, ConfigStdOut(variables.HostPort), ""));
 
     public Task<ProcessResult> ComposeDownAsync(string projectName, CancellationToken ct = default)
     {

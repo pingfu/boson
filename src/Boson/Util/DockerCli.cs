@@ -1,3 +1,5 @@
+using Boson.Deploy;
+
 namespace Boson.Util;
 
 public interface IDockerCli
@@ -6,12 +8,13 @@ public interface IDockerCli
     Task<ProcessResult> ComposeVersionAsync(CancellationToken ct = default);
 
     Task<ProcessResult> ComposeUpBuildAsync(
-        string projectName, string workingDirectory, int hostPort,
+        string projectName, string workingDirectory, ComposeVariables variables,
         Action<string>? log = null, CancellationToken ct = default);
 
     /// <summary>The compose file as compose resolves it, variables substituted.</summary>
     Task<ProcessResult> ComposeConfigAsync(
-        string projectName, string workingDirectory, int hostPort, CancellationToken ct = default);
+        string projectName, string workingDirectory, ComposeVariables variables,
+        CancellationToken ct = default);
 
     Task<ProcessResult> ComposeDownAsync(string projectName, CancellationToken ct = default);
     Task<ProcessResult> ComposePsAsync(string projectName, CancellationToken ct = default);
@@ -32,32 +35,25 @@ public sealed class DockerCli(IProcessRunner runner) : IDockerCli
         runner.RunAsync("docker", ["compose", "version", "--short"], ct: ct);
 
     public Task<ProcessResult> ComposeUpBuildAsync(
-        string projectName, string workingDirectory, int hostPort,
+        string projectName, string workingDirectory, ComposeVariables variables,
         Action<string>? log = null, CancellationToken ct = default) =>
         runner.RunAsync(
             "docker",
             ["compose", "--project-name", projectName, "up", "-d", "--build", "--quiet-pull"],
             workingDirectory,
             onOutputLine: log,
-            environment: HostPortEnvironment(hostPort),
+            environment: variables.ToEnvironment(),
             ct: ct);
 
     public Task<ProcessResult> ComposeConfigAsync(
-        string projectName, string workingDirectory, int hostPort, CancellationToken ct = default) =>
+        string projectName, string workingDirectory, ComposeVariables variables,
+        CancellationToken ct = default) =>
         runner.RunAsync(
             "docker",
             ["compose", "--project-name", projectName, "config", "--format", "json"],
             workingDirectory,
-            environment: HostPortEnvironment(hostPort),
+            environment: variables.ToEnvironment(),
             ct: ct);
-
-    /// <summary>
-    /// The port boson allocated, for the compose file to publish on. Supplied
-    /// per invocation rather than written into the checkout, so the number
-    /// stays in the database and a `git reset --hard` cannot disagree with it.
-    /// </summary>
-    private static Dictionary<string, string> HostPortEnvironment(int hostPort) =>
-        new() { [Deploy.ComposePorts.HostPortVariable] = hostPort.ToString() };
 
     public Task<ProcessResult> ComposeDownAsync(string projectName, CancellationToken ct = default) =>
         runner.RunAsync("docker", ["compose", "--project-name", projectName, "down"], ct: ct);

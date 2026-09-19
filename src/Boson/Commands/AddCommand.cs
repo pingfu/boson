@@ -1,4 +1,5 @@
 using System.CommandLine;
+using Boson.Deploy;
 using Boson.Serve;
 using Boson.Util;
 
@@ -151,9 +152,55 @@ public static class AddCommand
         
         Console.WriteLine();
         Console.WriteLine("Next steps:");
-        Console.WriteLine($"  1. If the project's compose needs env, create {paths.ProjectDir(repo)}/.env");
-        Console.WriteLine("     (copy the repo's template).");
+        PrintEnvStep(paths, repo, fetchFailed);
         Console.WriteLine($"  2. boson deploy {repo}");
         Console.WriteLine("The first successful deploy activates push-to-deploy.");
+    }
+
+    /// <summary>
+    /// Names the environment sets the fetched repository actually asks for, so
+    /// the admin creates the files this project needs rather than guessing from
+    /// a generic instruction.
+    /// </summary>
+    private static void PrintEnvStep(BosonPaths paths, string repo, bool fetchFailed)
+    {
+        var envDir = paths.EnvDir(repo);
+
+        if (fetchFailed)
+        {
+            Console.WriteLine($"  1. If the project's compose needs env, create {envDir}/default");
+            return;
+        }
+
+        var declared = BosonFile.Find(paths.ProjectDir(repo), out var problem);
+
+        if (problem is not null)
+        {
+            Console.WriteLine($"  1. Fix {problem}");
+            Console.WriteLine("     Deploys fail until it parses.");
+            return;
+        }
+
+        var sets = declared?.Deployments
+            .Select(d => d.Env)
+            .Where(set => set is not null)
+            .Distinct()
+            .Order()
+            .ToList() ?? [];
+
+        if (sets.Count == 0)
+        {
+            Console.WriteLine(
+                $"  1. If the project's compose needs env, create {Path.Combine(envDir, BosonPaths.DefaultEnvSet)}");
+            Console.WriteLine("     (copy the repo's template; compose reads it as $BOSON_ENV_FILE).");
+            return;
+        }
+
+        Console.WriteLine($"  1. Create the environment sets {BosonFile.FileName} names:");
+
+        foreach (var set in sets)
+            Console.WriteLine($"     {Path.Combine(envDir, set!)}");
+
+        Console.WriteLine("     (copy the repo's template; compose reads them as $BOSON_ENV_FILE).");
     }
 }
