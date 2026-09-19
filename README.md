@@ -14,16 +14,18 @@ Per project it takes three inputs: the repo, a public hostname, and the loopback
 curl -fL https://github.com/pingfu/boson/releases/latest/download/boson-linux-x64 -o /tmp/boson
 install -m 755 /tmp/boson /usr/local/bin/boson
 
-boson init deploy.example.com
+boson init deploy.example.com        # boson's own hostname
 ```
+
+`deploy.example.com` is boson's own hostname, resolving to this server. You use it to check the platform and to add projects. GitHub never connects to it, so a private name works too (`boson.enclave`), at the cost of a browser warning: Caddy issues that one itself, since a public CA won't.
+
+Every project you add brings a second kind of hostname, its own public one, and that is where GitHub delivers its webhooks. Those need public A records pointing at this server, with ports 80 and 443 free on the host and reachable from the internet.
 
 `init` verifies the software requirements (Docker with the compose v2 plugin, `git`, systemd, root), then installs the platform. TLS certificates are provisioned and renewed automatically, here and for each project hostname you add. Confirm the install by opening `https://deploy.example.com/_boson/health`: a 200 proves DNS, reachability and TLS end to end.
 
-The admin hostname is the platform's own address, where GitHub delivers webhooks. It needs an A record pointing at the host, as does each project hostname. Ports 80 and 443 must be free on the host and reachable from the internet.
-
 ## Prepare your project
 
-Your repo needs a `docker-compose.yml` at its root whose web-facing service binds to loopback on a port you choose, unique per project on this host (80, 443, 2019 and 9000 are taken by the platform):
+Your repo needs a `docker-compose.yml` at its root whose web-facing service binds to loopback on a port you choose, unique per project on this host. You pass the same number to `boson add --upstream-port`:
 
 ```yaml
 services:
@@ -34,7 +36,16 @@ services:
     env_file: .env                # if your app takes env vars
 ```
 
-Caddy proxies the public hostname to that loopback port. If your app takes env vars, reference `.env`, commit a template (`.env.example`) and gitignore the real file: the admin creates `.env` on the server after `boson add`.
+Four ports belong to the platform, and `boson add` refuses them:
+
+| Port | Listens on | Used by |
+|---|---|---|
+| 80 | every interface | Caddy, for plain HTTP |
+| 443 | every interface | Caddy, for HTTPS: your sites are served here |
+| 2019 | 127.0.0.1 | how boson tells Caddy which hostname goes to which container |
+| 9000 | 127.0.0.1 | boson itself, which Caddy hands GitHub's push notifications and the setup pages |
+
+Caddy proxies the public hostname to that loopback port. The whole hostname maps to your container: boson reserves one path on it, `/_boson/webhook/`, where GitHub posts. If your app takes env vars, reference `.env`, commit a template (`.env.example`) and gitignore the real file: the admin creates `.env` on the server after `boson add`.
 
 ## Add a project
 
@@ -44,9 +55,11 @@ boson add org/my-app --hostname my-app.example.com --upstream-port 8080
 
 Projects are referenced by repo name in every later command (`boson deploy org/my-app`). `--branch <name>` sets the tracked branch (default: `main`).
 
+`--upstream-port` is the number your compose file publishes on loopback: Caddy dials `127.0.0.1:<port>` for everything arriving on that hostname. Any free port works, one per project, and `add` refuses a port another project has claimed. The allocation belongs to the host rather than the repo, which is what lets the same repo run on several servers and stops a push rebinding a port in use.
+
 `add` prints a setup URL; open it in any browser (your own machine is fine): you create a GitHub App for the project, then install it on the repo. Boson then fetches the repo into `/srv/org/my-app/` and sets up the hostname's routing and certificate.
 
-Ctrl-C stops the progress display, not the add: complete the browser steps and the project is added anyway (`boson list` shows it). Abandon the browser instead and nothing was saved; re-run the same command to start over.
+Ctrl-C stops the progress display, not the add: complete the browser steps and the project is added anyway (`boson status` shows it). Abandon the browser instead and nothing was saved; re-run the same command to start over.
 
 `add` fetches the code but doesn't deploy, so you can set up secrets first: if your compose needs env vars, create `/srv/org/my-app/.env` (start from the repo's `.env.example`). Then run `boson deploy org/my-app`: the first successful deploy switches on push-to-deploy.
 
@@ -68,7 +81,7 @@ In App → Advanced → Recent Deliveries: red means broken, green means fine.
 | 200 | Push verified, nothing to do (ping, untracked branch, or project awaiting first deploy) |
 | 403 | Signature mismatch: the stored secret and GitHub disagree. An incident. |
 
-A 202 means the deploy was queued; its outcome lives in `boson list` and the deploy log. Recover a failed delivery with GitHub's Redeliver button, or just run `boson deploy <org/name>`.
+A 202 means the deploy was queued; its outcome lives in `boson status` and the deploy log. Recover a failed delivery with GitHub's Redeliver button, or just run `boson deploy <org/name>`.
 
 ## Commands
 
@@ -76,7 +89,7 @@ A 202 means the deploy was queued; its outcome lives in `boson list` and the dep
 boson init <admin-hostname>   # install the platform
 boson add <org/name> ...      # add a project (then: boson deploy)
 boson deploy <org/name>       # redeploy by hand
-boson list                    # all projects: containers, last deploy
+boson status                  # platform and projects: version, containers, last deploy
 boson remove <org/name>       # tear down a project
 boson uninstall               # remove the platform
 ```
@@ -85,9 +98,9 @@ Run every command as root: the CLI manages the platform's user, systemd unit and
 
 Exit codes: `0` success · `1` user error · `2` runtime failure · `3` deploy already running · `99` internal bug (file an issue).
 
-`https://deploy.example.com/_boson/health` returns the running version, and proves the path GitHub's webhooks take. When it doesn't answer, `systemctl status boson` says why.
+`https://deploy.example.com/_boson/health` returns the running version. When it doesn't answer, `systemctl status boson` says why.
 
-`boson list` shows hostname, branch, webhook, container states and last deploy for each project. It reads the database and Docker directly, so a full table doesn't mean the daemon is up.
+`boson status` reports the daemon's version and the admin hostname, then hostname, branch, webhook, container states and last deploy for each project.
 
 For everything else, the usual tools work: `docker logs` for container output, `journalctl -u boson` for the daemon, `/var/log/boson/deploys/` for per-deploy build output.
 

@@ -19,7 +19,7 @@ namespace Boson.Serve;
 /// Recent Deliveries page readable at a glance: 403 means the signature did not
 /// verify (secret drift, an incident); 200 and 202 both mean it did, 200 when
 /// boson declines the push and 202 when a deploy was queued. A 202 never means
-/// the deploy succeeded — outcomes live in `boson list` and the deploy log.
+/// the deploy succeeded — outcomes live in `boson status` and the deploy log.
 /// </summary>
 public static class WebhookEndpoint
 {

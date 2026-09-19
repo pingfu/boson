@@ -42,7 +42,7 @@ public sealed class Deployer(
     ILogger logger) : IDeployer
 {
     // The drain is bounded so a push flood can't hold the project lock
-    // indefinitely; a still-set flag is surfaced by `boson list`.
+    // indefinitely; a still-set flag is surfaced by `boson status`.
     internal const int MaxPasses = 3;
 
     private int _active;
@@ -114,7 +114,7 @@ public sealed class Deployer(
                 if (passes >= MaxPasses)
                 {
                     logger.LogWarning(
-                        "{Repo}: deploy_pending still set after {Passes} passes; leaving it for `boson list` to surface",
+                        "{Repo}: deploy_pending still set after {Passes} passes; leaving it for `boson status` to surface",
                         repo, passes);
                     break;
                 }

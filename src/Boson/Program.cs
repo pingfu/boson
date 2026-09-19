@@ -15,7 +15,7 @@ public static class Program
         root.Subcommands.Add(InitCommand.Create());
         root.Subcommands.Add(AddCommand.Create());
         root.Subcommands.Add(DeployCommand.Create());
-        root.Subcommands.Add(ListCommand.Create());
+        root.Subcommands.Add(StatusCommand.Create());
         root.Subcommands.Add(RemoveCommand.Create());
         root.Subcommands.Add(UninstallCommand.Create());
         root.Subcommands.Add(ServeCommand.Create());

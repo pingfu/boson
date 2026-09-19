@@ -55,7 +55,7 @@ public static class DeployCommand
                 break;
             case 409:
                 Console.Error.WriteLine(
-                    $"a deploy for {repo} is already running — re-run when it finishes (boson list shows it)");
+                    $"a deploy for {repo} is already running — re-run when it finishes (boson status shows it)");
                 return ExitCodes.LockContention;
             case 404:
                 Console.Error.WriteLine($"unknown project: {repo}");
@@ -109,7 +109,7 @@ public static class DeployCommand
         catch (OperationCanceledException)
         {
             Console.WriteLine();
-            Console.WriteLine($"stopped watching — the daemon finishes the deploy on its own; see boson list and {logPath}");
+            Console.WriteLine($"stopped watching — the daemon finishes the deploy on its own; see boson status and {logPath}");
 
             return ExitCodes.Success;
         }

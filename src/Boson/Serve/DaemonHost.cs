@@ -22,6 +22,11 @@ namespace Boson.Serve;
 /// </summary>
 public sealed class DaemonHost(BosonPaths paths, int port)
 {
+    // Reported by /_boson/health as a timestamp rather than an elapsed count,
+    // so the caller renders the age and a captured response stays meaningful
+    // in a log.
+    private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
+
     public async Task<int> RunAsync(CancellationToken ct)
     {
         Directory.CreateDirectory(paths.DataDir);
@@ -153,7 +158,7 @@ public sealed class DaemonHost(BosonPaths paths, int port)
         var app = builder.Build();
 
         app.MapGet("/_boson/health", () =>
-            Results.Json(new { status = "ok", version = VersionInfo.Version }));
+            Results.Json(new { status = "ok", version = VersionInfo.Version, startedAt = _startedAt }));
 
         WebhookEndpoint.Map(app, projects, locks, deployer, log);
 
