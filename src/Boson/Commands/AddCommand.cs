@@ -6,12 +6,6 @@ namespace Boson.Commands;
 
 public static class AddCommand
 {
-    // Also enforced in ManifestFlowOrchestrator, which is the authority: the
-    // daemon validates against live DB state, and a CLI from a different build
-    // could be talking to it. Checking here too keeps an obvious mistake from
-    // costing a round trip and a GitHub App.
-    private static readonly int[] ReservedPorts = [80, 443, 2019, 9000];
-
     public static Command Create()
     {
         var repoArg = new Argument<string>("org/name") { Description = "GitHub repository" };
@@ -22,12 +16,6 @@ public static class AddCommand
             Required = true,
         };
 
-        var portOpt = new Option<int>("--upstream-port")
-        {
-            Description = "Host port Caddy reverse-proxies the hostname to (80, 443, 2019 and 9000 are reserved)",
-            Required = true,
-        };
-
         var branchOpt = new Option<string>("--branch")
         {
             Description = "Branch to deploy",
@@ -35,39 +23,24 @@ public static class AddCommand
         };
 
         var cmd = new Command("add", "Register a project: GitHub App manifest flow, Caddy route, initial fetch");
-        
+
         cmd.Arguments.Add(repoArg);
         cmd.Options.Add(hostnameOpt);
-        cmd.Options.Add(portOpt);
         cmd.Options.Add(branchOpt);
         cmd.SetAction((parseResult, ct) => RunAsync(
             parseResult.GetValue(repoArg)!,
             parseResult.GetValue(hostnameOpt)!,
-            parseResult.GetValue(portOpt),
             parseResult.GetValue(branchOpt)!,
             ct));
 
         return cmd;
     }
 
-    public static async Task<int> RunAsync(string repoInput, string hostname, int port, string branch, CancellationToken ct)
+    public static async Task<int> RunAsync(string repoInput, string hostname, string branch, CancellationToken ct)
     {
         if (!RepoName.TryCanonicalise(repoInput, out var repo))
         {
-            Console.Error.WriteLine($"invalid repo (expected org/name): {repoInput}");    
-            return ExitCodes.UserError;
-        }
-
-        if (port is < 1 or > 65535)
-        {
-            Console.Error.WriteLine($"port out of range: {port}");
-            return ExitCodes.UserError;
-        }
-
-        if (ReservedPorts.Contains(port))
-        {
-            Console.Error.WriteLine(
-                $"port {port} is reserved (80/443 Caddy, 2019 its admin API, 9000 the daemon)");
+            Console.Error.WriteLine($"invalid repo (expected org/name): {repoInput}");
             return ExitCodes.UserError;
         }
 
@@ -79,7 +52,7 @@ public static class AddCommand
         
         try
         {
-            start = await rpc.AddAsync(new AddRequest(repo, hostname, port, branch), ct);
+            start = await rpc.AddAsync(new AddRequest(repo, hostname, branch), ct);
         }
         catch (DaemonUnreachableException e)
         {

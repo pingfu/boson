@@ -174,7 +174,21 @@ public sealed class Deployer(
             Log($"HEAD {sha}");
 
             var composeName = RepoName.ComposeProjectName(project.Repo);
-            var result = await docker.ComposeUpBuildAsync(composeName, projectDir, Log, ct);
+
+            // Before the build, not after: a compose file publishing the wrong
+            // port builds perfectly and then serves nothing, and the 502 that
+            // follows says nothing about why.
+            var config = await docker.ComposeConfigAsync(
+                composeName, projectDir, project.UpstreamPort, ct);
+
+            if (!config.Ok)
+                throw new DeployStepException($"docker compose config: {config.StdErr.Trim()}");
+
+            if (ComposePorts.Problem(config.StdOut, project.UpstreamPort) is { } problem)
+                throw new DeployStepException(problem);
+
+            var result = await docker.ComposeUpBuildAsync(
+                composeName, projectDir, project.UpstreamPort, Log, ct);
             
             succeeded = result.Ok;
             

@@ -70,7 +70,7 @@ public sealed class ProjectsRepository(Db db) : IProjectsRepository
         catch (SqliteException e) when (e.SqliteErrorCode == 19) // SQLITE_CONSTRAINT
         {
             throw new ProjectCollisionException(
-                "repo, hostname or upstream port is already claimed by an active project");
+                "repo, hostname or host port is already claimed by an active project");
         }
     }
 

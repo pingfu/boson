@@ -4,7 +4,7 @@ Push-to-deploy for a single Linux server.
 
 Boson runs on your production host and automatically clones your GitHub repos and runs each one with `docker compose up -d --build`, routes a public hostname to each with automatic TLS using Caddy, and redeploys on every push.
 
-Per project it takes three inputs: the repo, a public hostname, and the loopback port your compose file publishes.
+Per project it takes two inputs: the repo and a public hostname.
 
 ![Your CI pipeline stays; boson absorbs the image registry, deploy step, reverse proxy and TLS renewal that would otherwise sit between a merge and a live container.](assets/boson-architecture-light.svg)
 
@@ -25,18 +25,20 @@ Every project you add brings a second kind of hostname, its own public one, and 
 
 ## Prepare your project
 
-Your repo needs a `docker-compose.yml` at its root whose web-facing service binds to loopback on a port you choose, unique per project on this host. You pass the same number to `boson add --upstream-port`:
+Your repo needs a `docker-compose.yml` at its root whose web-facing service publishes to loopback on `${BOSON_HOST_PORT}`:
 
 ```yaml
 services:
   web:
     build: .
     ports:
-      - "127.0.0.1:8080:8080"
-    env_file: .env                # if your app takes env vars
+      - "127.0.0.1:${BOSON_HOST_PORT}:8080"   # boson's port : your app's port
+    env_file: .env                            # if your app takes env vars
 ```
 
-Four ports belong to the platform, and `boson add` refuses them:
+boson picks the host port when you add the project, and sets `BOSON_HOST_PORT` for every `docker compose` it runs. Your repo names only the port your app listens on inside the container, `8080` here, so the same repo deploys to any boson server without carrying a number that's true on one machine. A deploy whose compose file publishes some other host port fails before it builds, and says which port boson expected.
+
+Four ports belong to the platform, and boson allocates from 30000-32767:
 
 | Port | Listens on | Used by |
 |---|---|---|
@@ -50,12 +52,12 @@ Caddy proxies the public hostname to that loopback port. The whole hostname maps
 ## Add a project
 
 ```bash
-boson add org/my-app --hostname my-app.example.com --upstream-port 8080
+boson add org/my-app --hostname my-app.example.com
 ```
 
 Projects are referenced by repo name in every later command (`boson deploy org/my-app`). `--branch <name>` sets the tracked branch (default: `main`).
 
-`--upstream-port` is the number your compose file publishes on loopback: Caddy dials `127.0.0.1:<port>` for everything arriving on that hostname. Any free port works, one per project, and `add` refuses a port another project has claimed. The allocation belongs to the host rather than the repo, which is what lets the same repo run on several servers and stops a push rebinding a port in use.
+`add` allocates this project's host port, skipping any another project holds and any the host is already listening on. `boson status` shows which one it picked.
 
 `add` prints a setup URL; open it in any browser (your own machine is fine): you create a GitHub App for the project, then install it on the repo. Boson then fetches the repo into `/srv/org/my-app/` and sets up the hostname's routing and certificate.
 

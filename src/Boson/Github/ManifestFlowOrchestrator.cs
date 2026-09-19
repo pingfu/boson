@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using Boson.Caddy;
 using Boson.Deploy;
+using Boson.Platform;
 using Boson.Serve;
 using Boson.Storage;
 using Boson.Util;
@@ -47,7 +48,6 @@ public sealed class ManifestFlowOrchestrator(
     ILogger logger)
 {
     public static readonly TimeSpan Ttl = TimeSpan.FromMinutes(15);
-    private static readonly int[] ReservedPorts = [80, 443, 2019, 9000];
 
     private sealed class PendingSetup
     {
@@ -73,25 +73,25 @@ public sealed class ManifestFlowOrchestrator(
 
         if (!RepoName.TryCanonicalise(request.Repo, out var repo))
             throw new BosonValidationException($"invalid repo (expected org/name): {request.Repo}");
-        if (request.Port is < 1 or > 65535)
-            throw new BosonValidationException($"port out of range: {request.Port}");
-        if (ReservedPorts.Contains(request.Port))
-            throw new BosonValidationException(
-                $"port {request.Port} is reserved (80/443 Caddy, 2019 its admin API, 9000 the daemon)");
         if (string.IsNullOrWhiteSpace(request.Hostname))
             throw new BosonValidationException("hostname is required");
         var hostname = request.Hostname.Trim().ToLowerInvariant();
         var branch = string.IsNullOrWhiteSpace(request.Branch) ? "main" : request.Branch.Trim();
 
-        foreach (var p in projects.ListActive())
+        var active = projects.ListActive();
+
+        foreach (var p in active)
         {
             if (p.Repo == repo)
                 throw new BosonValidationException($"repo already added: {repo}");
             if (p.Hostname == hostname)
                 throw new BosonValidationException($"hostname already claimed by {p.Repo}: {hostname}");
-            if (p.UpstreamPort == request.Port)
-                throw new BosonValidationException($"port already claimed by {p.Repo}: {request.Port}");
         }
+
+        // Allocated here, in the daemon, against live database state: two
+        // concurrent adds asking a CLI to pick would race for the same number.
+        var port = HostPortAllocator.Allocate(
+            active.Select(p => p.UpstreamPort), HostPortAllocator.IsFreeOnHost);
 
         var warnings = new List<string>();
         var addresses = await dns.ResolveAsync(hostname, ct);
@@ -118,7 +118,7 @@ public sealed class ManifestFlowOrchestrator(
             Token = token,
             Repo = repo,
             Hostname = hostname,
-            Port = request.Port,
+            Port = port,
             Branch = branch,
             CreatedAt = clock.GetUtcNow(),
         };

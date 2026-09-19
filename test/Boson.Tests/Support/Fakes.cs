@@ -34,6 +34,15 @@ public sealed class FakeDockerCli : IDockerCli
     public int UpCalls;
     public readonly List<string> DownedProjects = [];
     public string PsStdOut = "";
+    public readonly List<int> HostPortsPassed = [];
+
+    /// <summary>What `compose config` reports; the default publishes whatever port it is asked for.</summary>
+    public Func<int, string> ConfigStdOut { get; set; } = hostPort =>
+        """
+        {"services":{"web":{"ports":[
+          {"mode":"ingress","host_ip":"127.0.0.1","target":3000,"published":"PORT","protocol":"tcp"}
+        ]}}}
+        """.Replace("PORT", hostPort.ToString());
 
     private static ProcessResult Ok() => new(0, "", "");
 
@@ -42,13 +51,18 @@ public sealed class FakeDockerCli : IDockerCli
         Task.FromResult(new ProcessResult(0, "2.27.0", ""));
 
     public Task<ProcessResult> ComposeUpBuildAsync(
-        string projectName, string workingDirectory,
+        string projectName, string workingDirectory, int hostPort,
         Action<string>? log = null, CancellationToken ct = default)
     {
         Interlocked.Increment(ref UpCalls);
+        lock (HostPortsPassed) HostPortsPassed.Add(hostPort);
         log?.Invoke($"fake compose up {projectName}");
         return Task.FromResult(new ProcessResult(UpExitCode, "", UpExitCode == 0 ? "" : "build failed"));
     }
+
+    public Task<ProcessResult> ComposeConfigAsync(
+        string projectName, string workingDirectory, int hostPort, CancellationToken ct = default) =>
+        Task.FromResult(new ProcessResult(0, ConfigStdOut(hostPort), ""));
 
     public Task<ProcessResult> ComposeDownAsync(string projectName, CancellationToken ct = default)
     {
@@ -152,7 +166,9 @@ public sealed class MapProcessRunner : IProcessRunner
     public Task<ProcessResult> RunAsync(
         string fileName, IReadOnlyList<string> args,
         string? workingDirectory = null, string? stdin = null,
-        Action<string>? onOutputLine = null, CancellationToken ct = default)
+        Action<string>? onOutputLine = null,
+        IReadOnlyDictionary<string, string>? environment = null,
+        CancellationToken ct = default)
     {
         var key = $"{fileName} {args.FirstOrDefault()}".TrimEnd();
         return Task.FromResult(Map.TryGetValue(key, out var result)

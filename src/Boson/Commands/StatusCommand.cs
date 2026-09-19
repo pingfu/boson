@@ -89,7 +89,7 @@ public static class StatusCommand
 
         if (rows.Count == 0)
         {
-            Console.WriteLine("no projects — add one with: boson add <org/name> --hostname <host> --upstream-port <port>");
+            Console.WriteLine("no projects — add one with: boson add <org/name> --hostname <host> --host-port <port>");
             return ExitCodes.Success;
         }
 
@@ -97,7 +97,7 @@ public static class StatusCommand
 
         table.AddColumn("repo");
         table.AddColumn("hostname");
-        table.AddColumn("upstream port");
+        table.AddColumn("host port");
         table.AddColumn("branch");
         table.AddColumn("webhook");
         table.AddColumn("containers");

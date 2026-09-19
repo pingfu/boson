@@ -1,5 +1,6 @@
 using Boson.Deploy;
 using Boson.Github;
+using Boson.Platform;
 using Boson.Serve;
 using Boson.Storage;
 using Boson.Tests.Support;
@@ -42,7 +43,7 @@ public sealed class ManifestFlowOrchestratorTests : IDisposable
 
     private static AddRequest Request(
         string repo = "acme/site", string hostname = "site.example.com",
-        int port = 8080, string branch = "main") => new(repo, hostname, port, branch);
+        string branch = "main") => new(repo, hostname, branch);
 
     private async Task<string> RunToInstalledAsync(AddRequest? request = null, long installationId = 777)
     {
@@ -92,25 +93,28 @@ public sealed class ManifestFlowOrchestratorTests : IDisposable
         Assert.Contains(start.Warnings, w => w.Contains("www.site.example.com does not resolve"));
     }
 
-    [Theory]
-    [InlineData(80)]
-    [InlineData(443)]
-    [InlineData(2019)]
-    [InlineData(9000)]
-    public async Task Begin_rejects_reserved_ports(int port) =>
-        await Assert.ThrowsAsync<BosonValidationException>(() =>
-            _orchestrator.BeginAddAsync(Request(port: port)));
-
     [Fact]
     public async Task Begin_rejects_collisions_with_active_projects()
     {
         _projects.Insert(TestProjects.New());
         await Assert.ThrowsAsync<BosonValidationException>(() =>
-            _orchestrator.BeginAddAsync(Request(repo: "acme/site", hostname: "x.example.com", port: 9001)));
+            _orchestrator.BeginAddAsync(Request(repo: "acme/site", hostname: "x.example.com")));
         await Assert.ThrowsAsync<BosonValidationException>(() =>
-            _orchestrator.BeginAddAsync(Request(repo: "acme/other", hostname: "site.example.com", port: 9001)));
-        await Assert.ThrowsAsync<BosonValidationException>(() =>
-            _orchestrator.BeginAddAsync(Request(repo: "acme/other", hostname: "x.example.com", port: 8080)));
+            _orchestrator.BeginAddAsync(Request(repo: "acme/other", hostname: "site.example.com")));
+    }
+
+    [Fact]
+    public async Task The_port_is_allocated_and_skips_one_an_active_project_holds()
+    {
+        _projects.Insert(TestProjects.New(
+            repo: "acme/other", hostname: "other.example.com", port: HostPortAllocator.First));
+
+        await RunToInstalledAsync();
+
+        var port = _projects.GetByRepo("acme/site")!.UpstreamPort;
+
+        Assert.NotEqual(HostPortAllocator.First, port);
+        Assert.InRange(port, HostPortAllocator.First, HostPortAllocator.Last);
     }
 
     [Fact]

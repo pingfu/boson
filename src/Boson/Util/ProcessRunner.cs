@@ -16,6 +16,7 @@ public interface IProcessRunner
         string? workingDirectory = null,
         string? stdin = null,
         Action<string>? onOutputLine = null,
+        IReadOnlyDictionary<string, string>? environment = null,
         CancellationToken ct = default);
 }
 
@@ -27,6 +28,7 @@ public sealed class ProcessRunner : IProcessRunner
         string? workingDirectory = null,
         string? stdin = null,
         Action<string>? onOutputLine = null,
+        IReadOnlyDictionary<string, string>? environment = null,
         CancellationToken ct = default)
     {
         var psi = new ProcessStartInfo
@@ -38,8 +40,13 @@ public sealed class ProcessRunner : IProcessRunner
             RedirectStandardInput = stdin is not null,
             UseShellExecute = false,
         };
-        
+
         foreach (var a in args) psi.ArgumentList.Add(a);
+
+        // Added to the daemon's environment rather than replacing it: compose
+        // needs PATH and HOME to find docker and its credentials.
+        if (environment is not null)
+            foreach (var (key, value) in environment) psi.Environment[key] = value;
 
         using var process = new Process { StartInfo = psi };
 
