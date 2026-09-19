@@ -8,6 +8,34 @@ Per project it takes two inputs: the repo and a public hostname.
 
 ![Your CI pipeline stays; boson absorbs the image registry, deploy step, reverse proxy and TLS renewal that would otherwise sit between a merge and a live container.](assets/boson-architecture-light.svg)
 
+Boson is for the small-server deployment shape where you want a GitHub push to update a private Docker Compose app, but you do not want GitHub Actions to SSH into production, do not want to maintain runner IP allowlists, do not want to run a registry, and do not want a self-hosted CI runner sitting on the box.
+
+| ❌ Admin work | Common single-server deploy choice that brings it back |
+|---|---|
+| ❌ Open an SSH path from GitHub-hosted runners to production | GitHub Actions over SSH |
+| ❌ Store an SSH private key in GitHub Secrets | GitHub Actions over SSH |
+| ❌ Deal with broad or changing GitHub-hosted runner IP ranges | GitHub Actions over SSH |
+| ❌ Build images in CI and operate registry credentials | GitHub Actions plus a private registry |
+| ❌ Store registry pull credentials on the server | GitHub Actions plus a private registry |
+| ❌ Run a CI executor on or near production | Self-hosted GitHub Actions runner |
+| ❌ Maintain HMAC verification, locking, logging, retry behavior, TLS, reverse proxy config and deploy scripts | Hand-rolled webhook receiver |
+| ❌ Operate more control-plane software than a single Compose app usually needs | Larger app platform |
+
+Boson keeps the deploy path server-side and webhook-driven instead:
+
+```text
+GitHub push webhook -> boson -> git fetch/reset -> docker compose up -d --build
+```
+
+| ✅ With boson | ❌ Without boson |
+|---|---|
+| ✅ Point DNS at the server | ❌ Allowlist GitHub Actions runner IPs |
+| ✅ Open ports 80 and 443 | ❌ Open SSH to GitHub-hosted runners |
+| ✅ Install Docker, git and the boson binary | ❌ Put SSH private keys in GitHub Secrets |
+| ✅ Complete a GitHub App setup flow | ❌ Run a Docker registry for deploys |
+| ✅ Keep app secrets in server-side env files | ❌ Store registry pull credentials on the server |
+| ✅ Let the production host build from the repo checkout | ❌ Run a self-hosted CI runner on production |
+
 ## Install
 
 ```bash
