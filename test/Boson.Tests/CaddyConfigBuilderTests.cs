@@ -22,6 +22,18 @@ public class CaddyConfigBuilderTests
         config["apps"]!["http"]!["servers"]!["main"]!["routes"]!.AsArray();
 
     [Fact]
+    public void The_site_server_listens_on_https_only()
+    {
+        var listen = Build()["apps"]!["http"]!["servers"]!["main"]!["listen"]!
+            .AsArray().Select(l => l!.GetValue<string>());
+
+        // Port 80 belongs to Caddy's automatic HTTPS, which runs the
+        // HTTP->HTTPS redirect server and the ACME http-01 challenge there.
+        // Claiming it here silently disables both.
+        Assert.Equal(new[] { ":443" }, listen);
+    }
+
+    [Fact]
     public void No_projects_yields_admin_route_and_catch_all_404()
     {
         var config = Build();
@@ -41,7 +53,7 @@ public class CaddyConfigBuilderTests
             "http": {
               "servers": {
                 "main": {
-                  "listen": [":80", ":443"],
+                  "listen": [":443"],
                   "routes": [
                     {
                       "match": [{"host": ["boson.enclave"], "path": ["/_boson/*"]}],

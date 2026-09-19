@@ -106,7 +106,13 @@ public sealed class CaddyConfigBuilder
             {
                 ["main"] = new JsonObject
                 {
-                    ["listen"] = new JsonArray(":80", ":443"),
+                    // HTTPS only, which hands port 80 to Caddy's automatic
+                    // HTTPS: it then runs its own redirect server there for
+                    // exactly these hostnames, and serves the ACME http-01
+                    // challenge ahead of it. Listening on :80 here instead
+                    // means this server's host routes answer plain HTTP and no
+                    // redirect is generated at all.
+                    ["listen"] = new JsonArray(":443"),
                     ["routes"] = routes,
                     // Access logging: Caddy writes to its own stdout,
                     // captured by `docker logs boson-caddy`.
