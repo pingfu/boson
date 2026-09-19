@@ -98,3 +98,28 @@ jobs:
           target_commitish: ${{ github.sha }}
           files: assets/boson-*
           generate_release_notes: true
+
+  # Every release carries four uncompressed binaries, so the back catalogue is
+  # the bulk of what this repo stores. Runs after the release above, so the
+  # newest is always among those kept.
+  prune:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The README tells people to pin a version by release URL, and deleting a
+      # release breaks that URL. Keep enough that pinning means something.
+      KEEP: 10
+    steps:
+      - name: Delete releases older than the newest ${{ env.KEEP }}
+        run: |
+          set -euo pipefail
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 200 \
+            --json tagName,createdAt --jq 'sort_by(.createdAt) | reverse | .[].tagName' \
+            | tail -n +$((KEEP + 1)) \
+            | while read -r tag; do
+                echo "removing $tag"
+                gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+              done
