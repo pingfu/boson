@@ -107,7 +107,7 @@ Six things, all of them *between* systems rather than inside any one of them:
 - **DNS.** Boson never creates or edits records. `boson add` checks the hostname resolves and warns when the address matches no local interface (common and legitimate behind NAT); whether a record actually points at this host is proven only by requesting the site over the internet.
 - **Host provisioning.** Docker, the compose plugin, `git`, firewall rules, OS updates, kernel, disk. See "Installs one daemon, nothing else" below.
 - **Uninstalling GitHub Apps.** `boson remove` archives the project and surfaces the App's settings URL; removing the App on GitHub's side stays a human action, so a mistaken `remove` is never destructive to the GitHub relationship.
-- **Rollback.** There is no `boson rollback` in v1 — recovery from a bad deploy is to push a revert. See spec §21 [Q7].
+- **Rollback.** There is no `boson rollback` in v1 — recovery from a bad deploy is to push a revert. See spec §22 [Q7].
 - **Multi-host anything.** One host, no clustering, no scheduling, no service discovery.
 
 ### Trust model
@@ -283,7 +283,7 @@ The marketcanary repo retains:
 
 ## Open questions
 
-Tracked in `BOSON_SPEC.md` §21, which is authoritative.
+Tracked in `BOSON_SPEC.md` §22, which is authoritative.
 
 ## Implementation order
 
