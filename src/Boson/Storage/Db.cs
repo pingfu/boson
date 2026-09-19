@@ -4,7 +4,7 @@ namespace Boson.Storage;
 
 /// <summary>
 /// Connection factory. Every connection gets WAL, foreign keys and the busy
-/// timeout (spec §4, §16); the daemon and CLI processes write concurrently.
+/// timeout; the daemon and CLI processes write concurrently.
 /// </summary>
 public sealed class Db(string dbPath)
 {

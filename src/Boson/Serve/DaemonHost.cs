@@ -16,7 +16,7 @@ using ILogger = Microsoft.Extensions.Logging.ILogger;
 namespace Boson.Serve;
 
 /// <summary>
-/// The one resident boson process (spec §8): startup migration + recovery,
+/// The one resident boson process: startup migration + recovery,
 /// two Kestrel listeners (TCP 127.0.0.1:&lt;port&gt; fronted by Caddy, and the
 /// unix-socket CLI RPC), graceful shutdown that waits for in-flight deploys.
 /// </summary>
@@ -40,7 +40,7 @@ public sealed class DaemonHost(BosonPaths paths, int port)
 
         var recovered = deploys.MarkAllRunningAsFailed("daemon restart");
 
-        // JSONL file log, rolling 10 MB × 5 (spec §17), via Serilog's file sink.
+        // JSONL file log, rolling 10 MB × 5, via Serilog's file sink.
         using var serilog = new LoggerConfiguration()
             .MinimumLevel.Information()
             .WriteTo.File(new CompactJsonFormatter(), paths.DaemonLogPath,
@@ -79,6 +79,10 @@ public sealed class DaemonHost(BosonPaths paths, int port)
         await publicApp.StartAsync(ct);
         await rpcApp.StartAsync(ct);
 
+        // Kestrel creates the socket 0755, which leaves the daemon (running as
+        // `boson`) the only writer and every CLI invocation unable to connect.
+        // Group write is the grant: the socket file itself is the RPC's only
+        // authentication, so its mode is the access control list.
         if (!OperatingSystem.IsWindows() && File.Exists(paths.SocketPath))
             File.SetUnixFileMode(paths.SocketPath,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite |
@@ -111,7 +115,7 @@ public sealed class DaemonHost(BosonPaths paths, int port)
         {
         }
 
-        // Graceful shutdown (spec §8): stop accepting requests, let in-flight
+        // Graceful shutdown: stop accepting requests, let in-flight
         // deploys finish, bounded by the unit's TimeoutStopSec=600.
         log.LogInformation("shutting down; waiting for in-flight deploys");
 
@@ -139,6 +143,10 @@ public sealed class DaemonHost(BosonPaths paths, int port)
         builder.WebHost.ConfigureKestrel(k =>
         {
             k.ListenLocalhost(port);
+
+            // Slack above the endpoint's own cap so an oversized delivery is
+            // refused by the pipeline, with a logged reason, rather than by
+            // Kestrel closing the connection underneath it.
             k.Limits.MaxRequestBodySize = WebhookEndpoint.MaxBodyBytes + 1024 * 1024;
         });
 
@@ -211,6 +219,8 @@ public sealed class DaemonHost(BosonPaths paths, int port)
         ManifestFlowOrchestrator orchestrator,
         ILogger log)
     {
+        // A socket file outlives an unclean exit and binding onto it fails, so
+        // the daemon could never restart after a SIGKILL without this.
         if (File.Exists(paths.SocketPath)) File.Delete(paths.SocketPath);
 
         var builder = WebApplication.CreateSlimBuilder();
@@ -242,11 +252,17 @@ public sealed class DaemonHost(BosonPaths paths, int port)
         app.MapPost("/deploy/{org}/{name}", async (string org, string name) =>
         {
             var repo = $"{org}/{name}".ToLowerInvariant();
+
+            // Race the deploy id against the deploy itself. The CLI needs the id
+            // to start tailing the log, and it arrives long before the deploy
+            // ends — but the outcomes that never reach a deploy row (unknown
+            // project, lock already held) never raise onStarted at all, so
+            // waiting only on the id would hang the CLI on exactly those.
             var started = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             var deployTask = Task.Run(() =>
                 deployer.DeployAsync(repo, DeployTrigger.Manual, id => started.TrySetResult(id)));
-            
+
             _ = deployTask.ContinueWith(
                 t => log.LogError(t.Exception, "{Repo}: manual deploy task crashed", repo),
                 TaskContinuationOptions.OnlyOnFaulted);
@@ -275,7 +291,7 @@ public sealed class DaemonHost(BosonPaths paths, int port)
             if (project is null) return Results.NotFound(new ErrorResponse("unknown project"));
 
             // The compose project name alone identifies the containers, so a
-            // missing checkout doesn't block removal (spec §5).
+            // missing checkout doesn't block removal.
             var down = await docker.ComposeDownAsync(RepoName.ComposeProjectName(repo));
             
             if (!down.Ok)

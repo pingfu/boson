@@ -16,15 +16,18 @@ public abstract record DeployResult
 public interface IDeployer
 {
     /// <summary>
-    /// Runs the full deploy loop of spec §6, including the deploy_pending
-    /// drain. <paramref name="onStarted"/> fires once with the first pass's
-    /// deploy id, before any deploy work.
+    /// Runs the full deploy loop, including the deploy_pending drain.
+    /// Every deploy means "deploy the branch tip, now": no target commit is
+    /// passed, so a push that lands while an earlier one is being deployed is
+    /// satisfied by the newer tip rather than queueing a deploy per commit.
+    /// <paramref name="onStarted"/> fires once with the first pass's deploy id,
+    /// before any deploy work, so the CLI can start tailing the log.
     /// </summary>
     Task<DeployResult> DeployAsync(
         string repo, DeployTrigger trigger,
         Action<long>? onStarted = null, CancellationToken ct = default);
 
-    /// <summary>Graceful shutdown support (spec §8): wait for in-flight deploys.</summary>
+    /// <summary>Graceful shutdown support: wait for in-flight deploys.</summary>
     Task WaitForIdleAsync(TimeSpan timeout);
 }
 
@@ -38,8 +41,8 @@ public sealed class Deployer(
     BosonPaths paths,
     ILogger logger) : IDeployer
 {
-    // Spec §6 step 9: the deploy_pending drain is bounded so a push flood can't
-    // hold the project lock indefinitely; a still-set flag is surfaced by `boson list`.
+    // The drain is bounded so a push flood can't hold the project lock
+    // indefinitely; a still-set flag is surfaced by `boson list`.
     internal const int MaxPasses = 3;
 
     private int _active;
@@ -51,7 +54,9 @@ public sealed class Deployer(
         if (projects.GetByRepo(repo) is null)
             return new DeployResult.NotFound();
 
-        // §6 step 1 — non-blocking lock; contention coalesces or reports.
+        // Non-blocking: a webhook that finds the lock held records its intent
+        // and returns, so GitHub gets its 202 inside the 10-second budget
+        // instead of waiting out a deploy that takes minutes.
         if (!locks.TryEnter(repo))
         {
             if (trigger == DeployTrigger.Webhook)
@@ -89,7 +94,9 @@ public sealed class Deployer(
 
                 lastSucceeded = await RunPassAsync(project, deployId, currentTrigger, ct);
 
-                // §6 step 8 — activation is purely this DB flag; only a success flips it.
+                // Activation is purely this DB flag, and only a success flips
+                // it: a project whose first deploy failed stays inert, so a
+                // half-configured repo can't auto-deploy on the next push.
                 if (lastSucceeded && !project.WebhookActive)
                 {
                     projects.MarkWebhookActive(repo);
@@ -97,7 +104,10 @@ public sealed class Deployer(
                     logger.LogInformation("{Repo}: first successful deploy; push-to-deploy activated", repo);
                 }
 
-                // §6 step 9 — drain deploy_pending while still holding the lock.
+                // Drain while still holding the lock, so a push that arrived
+                // mid-deploy lands without a second caller racing in. Draining
+                // happens whether this pass succeeded or failed: a newer commit
+                // is often the fix for a broken one.
                 var fresh = projects.GetByRepo(repo);
                 if (fresh is not { DeployPending: true }) break;
 

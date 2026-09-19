@@ -4,13 +4,15 @@ namespace Boson.Caddy;
 
 public interface ICaddySynchroniser
 {
-    /// <summary>Rebuild the full config from DB state and POST /load it (spec §7).</summary>
+    /// <summary>Rebuild the full config from DB state and POST /load it.</summary>
     Task SyncAsync(CancellationToken ct = default);
 }
 
 /// <summary>
-/// The daemon's single writer for steady-state Caddy config pushes; the mutex
-/// is spec §16's "Caddy admin updates" row.
+/// The daemon's single writer for steady-state Caddy config pushes. Every push
+/// is a full-config replace, so two concurrent ones would race to overwrite
+/// each other wholesale; the mutex serialises them. `boson init` also pushes,
+/// but only at bootstrap and recovery, never alongside normal operation.
 /// </summary>
 public sealed class CaddySynchroniser(
     CaddyConfigBuilder builder,

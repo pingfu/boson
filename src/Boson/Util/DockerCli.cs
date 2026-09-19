@@ -12,7 +12,7 @@ public interface IDockerCli
     Task<ProcessResult> ComposeDownAsync(string projectName, CancellationToken ct = default);
     Task<ProcessResult> ComposePsAsync(string projectName, CancellationToken ct = default);
 
-    /// <summary>Platform stack: YAML piped over stdin, never a file on disk (spec §9).</summary>
+    /// <summary>Platform stack: YAML piped over stdin, never a file on disk.</summary>
     Task<ProcessResult> ComposeUpStdinAsync(string yaml, CancellationToken ct = default);
     Task<ProcessResult> ComposeDownStdinAsync(string yaml, CancellationToken ct = default);
 

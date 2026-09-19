@@ -11,12 +11,22 @@ using Microsoft.Extensions.Logging;
 namespace Boson.Serve;
 
 /// <summary>
-/// POST /_boson/webhook/{org}/{name} — the spec §14 validation pipeline, in
-/// order, each step short-circuiting. The response is sent before any deploy
-/// work starts, so GitHub's 10-second budget is met by construction.
+/// POST /_boson/webhook/{org}/{name} — the validation pipeline, in order, each
+/// step short-circuiting. The response is sent before any deploy work starts,
+/// so GitHub's 10-second budget is met by construction.
+///
+/// The status codes carry exactly two meanings, which is what makes GitHub's
+/// Recent Deliveries page readable at a glance: 403 means the signature did not
+/// verify (secret drift, an incident); 200 and 202 both mean it did, 200 when
+/// boson declines the push and 202 when a deploy was queued. A 202 never means
+/// the deploy succeeded — outcomes live in `boson list` and the deploy log.
 /// </summary>
 public static class WebhookEndpoint
 {
+    /// <summary>
+    /// GitHub's own webhook payload cap, so no legitimate delivery is ever
+    /// rejected for size.
+    /// </summary>
     public const long MaxBodyBytes = 25 * 1024 * 1024;
 
     public static void Map(
@@ -94,7 +104,7 @@ public static class WebhookEndpoint
                 return Results.Json(new { status = "ignored" });
             }
 
-            // 7 — activation filter (spec §14 step 7).
+            // 7 — activation filter.
             if (!project.WebhookActive)
             {
                 if (locks.IsHeld(repo))
@@ -107,7 +117,7 @@ public static class WebhookEndpoint
                 return Results.Json(new { status = "inactive" });
             }
 
-            // All pass — 202, then the deploy on a background task (spec §8).
+            // All pass — 202, then the deploy on a background task.
             _ = Task.Run(async () =>
             {
                 try

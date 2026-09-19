@@ -3,7 +3,7 @@ using Boson.Util;
 namespace Boson.Platform;
 
 /// <summary>
-/// Writes, verifies and removes /etc/systemd/system/boson.service (spec §8),
+/// Writes, verifies and removes /etc/systemd/system/boson.service,
 /// and wraps the systemctl calls init/uninstall need.
 /// </summary>
 public sealed class SystemdUnit(IProcessRunner runner, string unitPath)

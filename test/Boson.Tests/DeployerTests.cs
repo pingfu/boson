@@ -155,7 +155,7 @@ public class DeployerTests : IDisposable
     [Fact]
     public async Task Drain_runs_even_after_a_failed_deploy()
     {
-        // A newer commit is often the fix for a broken one (spec §6 step 9).
+        // A newer commit is often the fix for a broken one.
         _docker.UpExitCode = 1;
         _git.OnFetch = call =>
         {
@@ -173,7 +173,7 @@ public class DeployerTests : IDisposable
     [Fact]
     public async Task Deploy_on_inactive_project_runs_normally()
     {
-        // Activation filtering guards only the webhook entry path (spec §6).
+        // Activation filtering guards only the webhook entry path.
         Assert.False(_projects.GetByRepo(Repo)!.WebhookActive);
         var result = await NewDeployer().DeployAsync(Repo, DeployTrigger.Webhook);
         Assert.IsType<DeployResult.Completed>(result);

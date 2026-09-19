@@ -100,6 +100,10 @@ public static class UninstallCommand
                 
                 if (!string.IsNullOrEmpty(backupPath))
                 {
+                    // VACUUM INTO, not a file copy: the DB is WAL-mode with the
+                    // daemon potentially still writing, and `cp` can capture a
+                    // torn snapshot. This is the last chance to keep the App
+                    // credentials, which GitHub will not re-issue.
                     using var conn = db.Open();
                     conn.Execute("VACUUM INTO @backupPath", new { backupPath });
                     Console.WriteLine($"✓ backup written to {backupPath}");
@@ -159,6 +163,8 @@ public static class UninstallCommand
             }
         }
 
+        // Pooled connections keep the DB and its WAL sidecars open, and an open
+        // handle makes the directory delete below fail.
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         
         foreach (var dir in new[] { paths.DataDir, paths.LogDir })

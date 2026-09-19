@@ -42,6 +42,9 @@ public sealed class ProcessRunner : IProcessRunner
         foreach (var a in args) psi.ArgumentList.Add(a);
 
         using var process = new Process { StartInfo = psi };
+
+        // The data-received handlers fire on threadpool threads, so the
+        // builders need the locks even though only one pipe feeds each.
         var stdout = new StringBuilder();
         var stderr = new StringBuilder();
 
@@ -68,6 +71,10 @@ public sealed class ProcessRunner : IProcessRunner
             return new ProcessResult(-1, "", $"failed to start {fileName}: {e.Message}");
         }
 
+        // Draining both pipes must start before anything is written to stdin.
+        // A child that fills its stdout pipe blocks until someone reads it, and
+        // if we were still writing stdin at that moment neither side could move.
+        // The platform compose YAML goes in this way.
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
@@ -83,6 +90,9 @@ public sealed class ProcessRunner : IProcessRunner
         }
         catch (OperationCanceledException)
         {
+            // The whole tree: `docker compose` spawns builders and per-service
+            // children, and killing only the parent orphans a running build.
+            // Kill throws if it already exited, which is the outcome we wanted.
             try { process.Kill(entireProcessTree: true); } catch { }
             throw;
         }

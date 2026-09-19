@@ -3,9 +3,10 @@ using Boson.Util;
 namespace Boson.Storage;
 
 /// <summary>
-/// The one CLI hygiene rule from spec §8: the CLI chowns the DB and its
-/// WAL/SHM sidecars to boson:boson after touching them, so the daemon never
-/// loses write access.
+/// CLI hygiene: the CLI runs as root, the daemon as `boson`. SQLite creates the
+/// -wal and -shm sidecars owned by whoever writes first, so a root-run command
+/// that touches the DB can leave the daemon unable to write to its own database.
+/// Every CLI path that opens the DB chowns it back.
 /// </summary>
 public static class DbOwnership
 {

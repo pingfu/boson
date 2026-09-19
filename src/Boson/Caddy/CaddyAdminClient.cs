@@ -6,7 +6,7 @@ namespace Boson.Caddy;
 public interface ICaddyAdminClient
 {
     Task<JsonDocument> GetConfigAsync(CancellationToken ct = default);
-    /// <summary>POST /load — full replace, never a partial patch (spec §7).</summary>
+    /// <summary>POST /load — full replace, never a partial patch.</summary>
     Task LoadConfigAsync(JsonDocument cfg, CancellationToken ct = default);
     Task<bool> IsReachableAsync(CancellationToken ct = default);
 }

@@ -14,8 +14,8 @@ public interface IInstallationTokenMinter
 
 /// <summary>
 /// Signs a short-lived RS256 JWT with the App's PEM (from SQLite) and
-/// exchanges it for a ghs_… installation access token (spec §13). No
-/// cross-deploy cache: every deploy pass mints fresh (spec §6). The token is
+/// exchanges it for a ghs_… installation access token. No
+/// cross-deploy cache: every deploy pass mints fresh. The token is
 /// never written to disk.
 /// </summary>
 public sealed class InstallationTokenMinter(
@@ -48,7 +48,7 @@ public sealed class InstallationTokenMinter(
             var header = new JwtHeader(credentials);
             var payload = new JwtPayload
             {
-                // iat backdated 60s for clock skew; exp inside GitHub's 10-minute cap (spec §13).
+                // iat backdated 60s for clock skew; exp inside GitHub's 10-minute cap.
                 { "iat", now.ToUnixTimeSeconds() - 60 },
                 { "exp", now.ToUnixTimeSeconds() + 540 },
                 { "iss", project.GithubAppId.ToString() },

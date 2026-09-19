@@ -8,9 +8,9 @@ using Xunit;
 namespace Boson.Tests.Integration;
 
 /// <summary>
-/// Spec §20 Deployer row: a real `docker compose up -d --build` against a fake
-/// compose project (a single nginx container). Git and token minting are faked;
-/// the docker path is real.
+/// A real `docker compose up -d --build` against a fake compose project (a
+/// single nginx container). Git and token minting are faked; the docker path
+/// is real.
 /// </summary>
 public sealed class DeployerIntegrationTests : IDisposable
 {

@@ -1,7 +1,7 @@
 namespace Boson.Util;
 
 /// <summary>
-/// init/uninstall mutual exclusion (spec §16): a filesystem lock, because
+/// init/uninstall mutual exclusion: a filesystem lock, because
 /// those commands contend CLI-vs-CLI across processes.
 /// </summary>
 public sealed class PlatformLock : IDisposable

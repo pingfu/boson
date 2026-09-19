@@ -72,7 +72,7 @@ public static class DeployCommand
         Console.WriteLine();
 
         // Observe through the artifacts that already exist: tail the log file,
-        // poll the deploys row (spec §8).
+        // poll the deploys row.
         long offset = 0;
 
         try
@@ -119,6 +119,9 @@ public static class DeployCommand
     {
         if (!File.Exists(logPath)) return offset;
 
+        // The daemon holds this file open and is writing to it as we read, so
+        // the share flags have to admit a concurrent writer; the default would
+        // fail the open outright.
         using var stream = new FileStream(
             logPath, FileMode.Open, FileAccess.Read,
             FileShare.ReadWrite | FileShare.Delete);

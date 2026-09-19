@@ -5,7 +5,15 @@ services:
     image: caddy:2-alpine
     container_name: boson-caddy
     restart: unless-stopped
+
+    # Host networking: Caddy reverse-proxies to project containers on
+    # 127.0.0.1:<upstream_port>, which it cannot reach from a bridge network.
     network_mode: host
+
+    # --resume, not the image's default command. Config reaches Caddy only over
+    # the admin API and no Caddyfile exists on disk, so a stock start would come
+    # up with an empty config: every hostname dead, and Caddy itself healthy and
+    # silent about it. --resume reloads the autosaved config instead.
     command: ["caddy", "run", "--resume"]
     volumes:
       - caddy-data:/data

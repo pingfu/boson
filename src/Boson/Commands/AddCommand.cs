@@ -6,6 +6,10 @@ namespace Boson.Commands;
 
 public static class AddCommand
 {
+    // Also enforced in ManifestFlowOrchestrator, which is the authority: the
+    // daemon validates against live DB state, and a CLI from a different build
+    // could be talking to it. Checking here too keeps an obvious mistake from
+    // costing a round trip and a GitHub App.
     private static readonly int[] ReservedPorts = [80, 443, 2019, 9000];
 
     public static Command Create()
@@ -104,7 +108,7 @@ public static class AddCommand
         Console.WriteLine();
 
         // The daemon owns the flow; this loop only observes it. Ctrl-C here
-        // stops the display, not the flow (spec §11).
+        // stops the display, not the flow.
         string? lastPhase = null;
 
         while (true)
@@ -151,7 +155,7 @@ public static class AddCommand
                     PrintNextSteps(paths, repo, fetchFailed: false, status.Body.Error);
                     return ExitCodes.Success;
                 case "fetch_failed":
-                    // Row persisted; the failure is printed and `boson deploy` retries (spec §5).
+                    // Row persisted; the failure is printed and `boson deploy` retries.
                     PrintNextSteps(paths, repo, fetchFailed: true, status.Body.Error);
                     return ExitCodes.Success;
                 case "failed":

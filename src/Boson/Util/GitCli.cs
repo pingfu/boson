@@ -3,7 +3,7 @@ namespace Boson.Util;
 public interface IGitCli
 {
     /// <summary>
-    /// One git path for every deploy (spec §13): init when .git is missing,
+    /// One git path for every deploy: init when .git is missing,
     /// then fetch the branch tip with the token inline and reset --hard.
     /// Returns the resulting HEAD sha.
     /// </summary>

@@ -6,7 +6,7 @@ public static class BrowserLauncher
 {
     /// <summary>
     /// Best effort: the setup URL is public and served through Caddy, so the
-    /// browser can be anywhere (spec §11). A headless host simply prints it.
+    /// browser can be anywhere. A headless host simply prints it.
     /// </summary>
     public static bool TryOpen(string url)
     {

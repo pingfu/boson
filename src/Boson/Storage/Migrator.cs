@@ -5,9 +5,12 @@ using Dapper;
 namespace Boson.Storage;
 
 /// <summary>
-/// Applies embedded SQL migrations. Runs at daemon startup only (spec §8);
-/// every other invocation calls <see cref="CheckCompatibility"/> and refuses
-/// on mismatch.
+/// Applies embedded SQL migrations at daemon startup, and nowhere else: the
+/// daemon is a single long-lived process, so migrating there means no two
+/// writers can ever apply the same migration concurrently. CLI invocations
+/// call <see cref="CheckCompatibility"/> instead and refuse on mismatch,
+/// which turns "upgraded the binary but didn't restart the daemon" into a
+/// message naming the fix rather than a confusing SQL error.
 /// </summary>
 public sealed partial class Migrator(Db db)
 {
@@ -53,7 +56,7 @@ public sealed partial class Migrator(Db db)
         return conn.ExecuteScalar<int?>("SELECT max(version) FROM schema_version") ?? 0;
     }
 
-    /// <summary>Daemon startup only (spec §8).</summary>
+    /// <summary>Daemon startup only.</summary>
     public void MigrateToLatest()
     {
         var current = CurrentVersion();
@@ -83,7 +86,7 @@ public sealed partial class Migrator(Db db)
         }
     }
 
-    /// <summary>Every non-daemon invocation that touches the DB (spec §5, §8).</summary>
+    /// <summary>Every non-daemon invocation that touches the DB.</summary>
     public void CheckCompatibility()
     {
         var current = CurrentVersion();

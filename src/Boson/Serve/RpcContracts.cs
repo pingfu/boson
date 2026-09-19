@@ -1,6 +1,6 @@
 namespace Boson.Serve;
 
-/// <summary>Wire types for the CLI↔daemon RPC over the unix socket (spec §8).</summary>
+/// <summary>Wire types for the CLI↔daemon RPC over the unix socket.</summary>
 public sealed record AddRequest(string Repo, string Hostname, int Port, string Branch);
 
 public sealed record AddStartResponse(string SetupUrl, string Token, string[] Warnings);

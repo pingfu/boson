@@ -5,7 +5,7 @@ namespace Boson.Storage;
 public interface IDeploysRepository
 {
     /// <summary>
-    /// The log path is derived from the row id (spec §3), so the row is
+    /// The log path is derived from the row id, so the row is
     /// inserted first and the path filled in inside the same transaction.
     /// </summary>
     long Insert(long projectId, DeployTrigger trigger, Func<long, string> logPathFor);
@@ -15,7 +15,7 @@ public interface IDeploysRepository
     DeployRow? GetLatestForProject(long projectId);
     IReadOnlyList<DeployRow> ListForProject(long projectId);
     /// <summary>
-    /// Startup recovery (spec §8): a 'running' row without a live daemon task
+    /// Startup recovery: a 'running' row without a live daemon task
     /// can only be a crash orphan, because the daemon is the sole deploy executor.
     /// </summary>
     int MarkAllRunningAsFailed(string error);

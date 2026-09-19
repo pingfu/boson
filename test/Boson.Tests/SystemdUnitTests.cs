@@ -8,7 +8,7 @@ namespace Boson.Tests;
 public class SystemdUnitTests
 {
     [Fact]
-    public void Unit_content_carries_the_spec_directives()
+    public void Unit_content_carries_the_required_directives()
     {
         var content = SystemdUnit.Content;
         Assert.Contains("Type=simple", content);

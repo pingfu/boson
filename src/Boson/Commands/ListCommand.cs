@@ -52,7 +52,7 @@ public static class ListCommand
                     : new LastDeployEntry(last.Id, last.Status.AsDbValue(), last.CommitSha, last.StartedAt,
                         last.FinishedAt, last.LogPath, last.Error),
 
-                // A pending flag with nothing running means a redeploy was dropped (spec §4).
+                // A pending flag with nothing running means a redeploy was dropped.
                 DeployPendingIdle: p.DeployPending && last?.Status != DeployStatus.Running));
         }
 
@@ -111,6 +111,12 @@ public static class ListCommand
         return ExitCodes.Success;
     }
 
+    /// <summary>
+    /// Compose's `ps --format json` emits a JSON array on some versions and one
+    /// JSON object per line on others, and boson does not pin the host's compose
+    /// version. Both shapes are read; anything else degrades to "unknown"
+    /// rather than failing the whole listing.
+    /// </summary>
     internal static string SummariseComposePs(string stdout)
     {
         var states = new List<string>();
@@ -120,7 +126,7 @@ public static class ListCommand
             var text = stdout.Trim();
 
             if (text.Length == 0) return "none";
-            
+
             if (text.StartsWith('['))
             {
                 using var doc = JsonDocument.Parse(text);

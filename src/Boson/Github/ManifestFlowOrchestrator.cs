@@ -23,9 +23,15 @@ public enum SetupPhase
 }
 
 /// <summary>
-/// Owns the App-setup flow inside the daemon (spec §11): pending entries are
-/// in-memory, keyed by a one-time state token with a 15-minute TTL. Nothing
-/// is persisted until the flow has everything; the project row is inserted whole.
+/// Owns the App-setup flow inside the daemon: pending entries are in-memory,
+/// keyed by a one-time state token with a 15-minute TTL. In-memory is what
+/// makes abandonment free: a browser session that never finishes, or a daemon
+/// restart, evaporates the entry with nothing to clean up.
+///
+/// Nothing is persisted until the flow has everything, and the project row is
+/// inserted whole, because GitHub issues the PEM and webhook secret exactly
+/// once. A half-written row would hold credentials that cannot be re-fetched
+/// and cannot be completed.
 /// </summary>
 public sealed class ManifestFlowOrchestrator(
     IProjectsRepository projects,
@@ -182,13 +188,22 @@ public sealed class ManifestFlowOrchestrator(
         return $"https://github.com/apps/{entry.Credentials.Slug}/installations/new?state={entry.Token}";
     }
 
-    /// <summary>Captures the installation id and finalises in the background (spec §11).</summary>
+    /// <summary>Captures the installation id and finalises in the background.</summary>
     public bool HandleInstalled(string state, long installationId)
     {
         var entry = Lookup(state);
         if (entry is null || entry.Credentials is null) return false;
+
+        // GitHub can land on setup_url more than once for one install (a browser
+        // refresh, or the operator revisiting the URL). Only the first call
+        // starts finalisation; a repeat still renders the success page, because
+        // the install did happen and a 404 would read as though it had not.
+        // A failed entry is the one repeat that must 404.
         if (entry.Phase != SetupPhase.AwaitingInstall) return entry.Phase != SetupPhase.Failed;
 
+        // Finalisation runs detached: this call is servicing GitHub's browser
+        // redirect, and the row insert, Caddy push and initial fetch together
+        // take longer than a page load should wait. The CLI polls GetStatus.
         entry.Phase = SetupPhase.Finalizing;
         entry.Finalisation = Task.Run(() => FinaliseAsync(entry, installationId));
         return true;
@@ -215,7 +230,7 @@ public sealed class ManifestFlowOrchestrator(
             await caddy.SyncAsync();
             entry.Phase = SetupPhase.Fetching;
 
-            // Initial fetch under the project's lock (spec §11); lock held means a
+            // Initial fetch under the project's lock; lock held means a
             // deploy is already running the identical fetch, so skip it.
             if (locks.TryEnter(entry.Repo))
             {

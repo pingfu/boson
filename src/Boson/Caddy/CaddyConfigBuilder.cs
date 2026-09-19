@@ -5,7 +5,7 @@ using Boson.Storage;
 namespace Boson.Caddy;
 
 /// <summary>
-/// Synthesises the whole structured-JSON config from DB state (spec §7).
+/// Synthesises the whole structured-JSON config from DB state.
 /// Route order: control /_boson/* → daemon, then per project its www redirect,
 /// its reserved webhook path and its proxy route, then the control catch-all
 /// 404. The control hostname can be private, because GitHub never reaches it;
@@ -31,6 +31,9 @@ public sealed class CaddyConfigBuilder
                 dial: $"127.0.0.1:{DaemonPort}"),
         };
 
+        // Ordered so the same DB state always produces byte-identical config:
+        // every change is a full replace, and a stable document is what makes
+        // one diffable against what Caddy is actually running.
         foreach (var p in projects.OrderBy(p => p.Hostname, StringComparer.Ordinal))
         {
             // The www alias only exists in Caddy's config, so the redirect has
@@ -55,6 +58,10 @@ public sealed class CaddyConfigBuilder
                 dial: $"127.0.0.1:{p.UpstreamPort}"));
         }
 
+        // Last, and only after every project route: the control hostname answers
+        // /_boson/* and nothing else. Without this terminator a request to it
+        // falls through to whatever Caddy matches next, which is a project's
+        // catch-all proxy — the control plane would quietly serve someone's app.
         routes.Add(new JsonObject
         {
             ["match"] = new JsonArray(new JsonObject

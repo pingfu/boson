@@ -5,10 +5,10 @@ using Xunit;
 namespace Boson.Tests.Integration;
 
 /// <summary>
-/// Spec §20 Caddy --resume row: the regression test for the reboot failure
-/// mode. Start Caddy with the platform stack's `caddy run --resume` command,
-/// POST a config, restart the container, and assert the config survived —
-/// this fails on the stock image command.
+/// The regression test for the reboot failure mode. Start Caddy with the
+/// platform stack's `caddy run --resume` command, POST a config, restart the
+/// container, and assert the config survived. This fails on the stock image
+/// command, which starts from an empty config and silently serves nothing.
 /// </summary>
 public sealed class CaddyResumeIntegrationTests : IDisposable
 {

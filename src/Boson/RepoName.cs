@@ -4,7 +4,7 @@ namespace Boson;
 
 /// <summary>
 /// Canonical "org/name" handling. Lowercasing happens once, at CLI argument
-/// parse (spec §4); every layer below receives the canonical form.
+/// parse; every layer below receives the canonical form.
 /// </summary>
 public static partial class RepoName
 {
@@ -24,8 +24,14 @@ public static partial class RepoName
     }
 
     /// <summary>
-    /// Compose project name (spec §6 step 6): the repo lowercased with every
-    /// character outside compose's allowed set [a-z0-9_-] replaced by '-'.
+    /// Compose project name: the repo lowercased with every character outside
+    /// compose's allowed set [a-z0-9_-] replaced by '-'.
+    ///
+    /// Passing this explicitly on every invocation is load-bearing. Left to
+    /// itself compose derives the project name from the compose file's
+    /// directory basename — the bare repo name — which two orgs' same-named
+    /// repos share, and colliding projects tear down each other's containers.
+    /// Deriving from org/name keeps them distinct.
     /// </summary>
     public static string ComposeProjectName(string repo)
     {

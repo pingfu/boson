@@ -1,7 +1,7 @@
 namespace Boson;
 
 /// <summary>
-/// Host filesystem layout (spec §3). Environment overrides exist for foreground
+/// Host filesystem layout. Environment overrides exist for foreground
 /// development on non-Linux hosts; production always uses the fixed paths.
 /// </summary>
 public sealed class BosonPaths

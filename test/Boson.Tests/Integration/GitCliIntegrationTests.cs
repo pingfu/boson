@@ -4,9 +4,9 @@ using Xunit;
 namespace Boson.Tests.Integration;
 
 /// <summary>
-/// Spec §20 GitCli row, against a local bare repo: first call initialises an
-/// empty directory, second call after a new push lands the new tip,
-/// force-push is tolerated, untracked files survive.
+/// Against a local bare repo: first call initialises an empty directory,
+/// second call after a new push lands the new tip, force-push is tolerated,
+/// untracked files survive.
 /// </summary>
 public sealed class GitCliIntegrationTests : IDisposable
 {
@@ -82,7 +82,7 @@ public sealed class GitCliIntegrationTests : IDisposable
         Assert.Equal("v2-amended", File.ReadAllText(Path.Combine(CheckoutPath, "app.txt")));
 
         // Untracked files survive every deploy: reset --hard touches only
-        // tracked files and boson never runs git clean (spec §13).
+        // tracked files and boson never runs git clean.
         Assert.Equal("SECRET=1", File.ReadAllText(envPath));
     }
 }

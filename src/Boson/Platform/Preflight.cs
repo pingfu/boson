@@ -5,9 +5,13 @@ namespace Boson.Platform;
 public sealed record PreflightFailure(string Problem, string Detail, string Remedy);
 
 /// <summary>
-/// Spec §10 step 1: verify every software prerequisite, install nothing.
-/// All checks run before any of them aborts; every failure is reported
-/// together with its remediation.
+/// Verifies every software prerequisite and installs nothing: a deploy host's
+/// package state is the operator's, and a PaaS that apt-gets behind their back
+/// is harder to trust than one that refuses to start.
+///
+/// Every check runs before any of them aborts, so the operator fixes the whole
+/// list in one pass instead of rediscovering the next missing dependency on
+/// each re-run.
 /// </summary>
 public sealed class Preflight(IProcessRunner runner, IHostProbe probe)
 {

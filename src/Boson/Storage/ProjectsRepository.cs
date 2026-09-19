@@ -7,7 +7,7 @@ public interface IProjectsRepository
 {
     Project? GetByRepo(string repo);
     IReadOnlyList<Project> ListActive();
-    /// <summary>Complete row only (spec §11); throws on repo/hostname/port collision.</summary>
+    /// <summary>Complete row only; throws on repo/hostname/port collision.</summary>
     void Insert(Project p);
     void MarkWebhookActive(string repo);
     void SetDeployPending(string repo, bool value);

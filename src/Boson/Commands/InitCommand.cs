@@ -74,8 +74,12 @@ public static class InitCommand
             Console.WriteLine("✓ created boson system user");
         }
 
+        // The daemon runs every project's compose file, so it needs the docker
+        // socket. Docker group membership is root-equivalent on the host: this
+        // is the line that makes "anyone who can push to a tracked branch can
+        // take over this host" true, and it is why boson is single-operator.
         var usermod = await runner.RunAsync("usermod", ["-aG", "docker", "boson"], ct: ct);
-        
+
         if (!usermod.Ok)
         {
             Console.Error.WriteLine($"failed to add boson to the docker group: {usermod.StdErr.Trim()}");
@@ -90,6 +94,9 @@ public static class InitCommand
                  })
             Directory.CreateDirectory(dir);
 
+        // 0700 throughout: the DB holds every project's App private key, and the
+        // checkouts under /srv hold the .env files the operator drops in. Both
+        // are readable by any local user otherwise.
         foreach (var dir in new[] { paths.DataDir, paths.LogDir, paths.SrvDir })
         {
             await runner.RunAsync("chown", ["-R", "boson:boson", dir], ct: ct);

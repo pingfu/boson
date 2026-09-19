@@ -2,7 +2,7 @@ using Xunit;
 
 namespace Boson.Tests.Integration;
 
-/// <summary>Runs only when BOSON_INTEGRATION=1 (spec §20).</summary>
+/// <summary>Runs only when BOSON_INTEGRATION=1.</summary>
 public sealed class IntegrationFactAttribute : FactAttribute
 {
     public IntegrationFactAttribute()

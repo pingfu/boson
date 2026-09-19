@@ -7,10 +7,10 @@ public sealed record ManifestConversion(long Id, string Slug, string Pem, string
 
 public interface IGithubClient
 {
-    /// <summary>POST /app-manifests/{code}/conversions (spec §11).</summary>
+    /// <summary>POST /app-manifests/{code}/conversions.</summary>
     Task<ManifestConversion> ConvertManifestAsync(string code, CancellationToken ct = default);
 
-    /// <summary>POST /app/installations/{id}/access_tokens with a Bearer JWT (spec §13).</summary>
+    /// <summary>POST /app/installations/{id}/access_tokens with a Bearer JWT.</summary>
     Task<InstallationToken> CreateInstallationTokenAsync(
         string jwt, long installationId, CancellationToken ct = default);
 }

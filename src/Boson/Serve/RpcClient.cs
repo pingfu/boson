@@ -11,7 +11,7 @@ public sealed class DaemonUnreachableException(string message, Exception? inner 
 public sealed record RpcResult<T>(HttpStatusCode Status, T? Body, string? Error);
 
 /// <summary>
-/// The CLI side of the unix-socket RPC (spec §8). Auth is the socket file
+/// The CLI side of the unix-socket RPC. Auth is the socket file
 /// itself; no tokens, no TLS.
 /// </summary>
 public sealed class RpcClient : IDisposable

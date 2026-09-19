@@ -4,15 +4,25 @@ After=network-online.target docker.service
 Wants=network-online.target
 
 [Service]
+# Type=simple, not notify: notify would pull in the Systemd hosting package for
+# no benefit, since restart-on-exit is the whole supervision story here.
 Type=simple
 User=boson
 Group=boson
 ExecStart=/usr/local/bin/boson serve
 WorkingDirectory=/var/lib/boson
+
+# The single-file binary extracts itself before running, and the boson user has
+# no home directory to extract into. Without this it fails to start at all.
 Environment=DOTNET_BUNDLE_EXTRACT_BASE_DIR=/var/lib/boson/.net
+
 NoNewPrivileges=true
 Restart=always
 RestartSec=2
+
+# Must stay above the deployer's 590s idle wait: a SIGTERM arriving mid-deploy
+# lets the build finish rather than killing it halfway. Lower this and
+# `systemctl restart` starts orphaning half-deployed projects.
 TimeoutStopSec=600
 
 [Install]

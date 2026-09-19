@@ -4,7 +4,7 @@ namespace Boson.Deploy;
 
 /// <summary>
 /// Per-project non-blocking locks. Plain process-local state is sufficient
-/// because the daemon is the sole deploy executor (spec §8, §16).
+/// because the daemon is the sole deploy executor.
 /// </summary>
 public sealed class ProjectLocks
 {
