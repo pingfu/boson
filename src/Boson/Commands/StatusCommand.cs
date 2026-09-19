@@ -86,7 +86,7 @@ public static class StatusCommand
 
         if (rows.Count == 0)
         {
-            Console.WriteLine("no projects — add one with: boson add <org/name> --hostname <host> --host-port <port>");
+            Console.WriteLine("no projects — add one with: boson add <org/name> --hostname <host>");
             return ExitCodes.Success;
         }
 
