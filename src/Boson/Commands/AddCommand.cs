@@ -174,25 +174,23 @@ public static class AddCommand
 
         var declared = BosonFile.Find(paths.ProjectDir(repo), out var problem);
 
-        if (problem is not null)
+        if (declared is null)
         {
-            Console.WriteLine($"  1. Fix {problem}");
-            Console.WriteLine("     Deploys fail until it parses.");
+            Console.WriteLine($"  1. Fix {problem ?? $"the missing {BosonFile.FileName} at the repository root"}");
+            Console.WriteLine("     Deploys fail until it reads.");
             return;
         }
 
-        var sets = declared?.Deployments
+        var sets = declared.Deployments
             .Select(d => d.Env)
             .Where(set => set is not null)
             .Distinct()
             .Order()
-            .ToList() ?? [];
+            .ToList();
 
         if (sets.Count == 0)
         {
-            Console.WriteLine(
-                $"  1. If the project's compose needs env, create {Path.Combine(envDir, BosonPaths.DefaultEnvSet)}");
-            Console.WriteLine("     (copy the repo's template; compose reads it as $BOSON_ENV_FILE).");
+            Console.WriteLine($"  1. {BosonFile.FileName} names no environment set, so nothing to create");
             return;
         }
 

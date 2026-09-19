@@ -24,6 +24,22 @@ public class DeployerTests : IDisposable
         _projects = new ProjectsRepository(_db.Db);
         _deploys = new DeploysRepository(_db.Db);
         _projects.Insert(TestProjects.New());
+
+        WriteBosonFile($"""
+            version: 1
+            deployments:
+              - branch: main
+                hostname: {TestProjects.New().Hostname}
+            """);
+    }
+
+    /// <summary>A deploy reads the file the fetch left behind, so a checkout without one has nothing to deploy.</summary>
+    private void WriteBosonFile(string yaml)
+    {
+        var dir = _dirs.Paths.ProjectDir(Repo);
+
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, BosonFile.FileName), yaml);
     }
 
     private Deployer NewDeployer() => new(
@@ -98,6 +114,93 @@ public class DeployerTests : IDisposable
         Assert.Equal(DeployStatus.Failed, row.Status);
         Assert.Contains("docker compose up exited 1", row.Error);
         Assert.False(_projects.GetByRepo(Repo)!.WebhookActive);
+    }
+
+    [Fact]
+    public async Task A_checkout_with_no_boson_file_has_nothing_to_deploy()
+    {
+        File.Delete(Path.Combine(_dirs.Paths.ProjectDir(Repo), BosonFile.FileName));
+
+        Assert.Contains($"no {BosonFile.FileName}", await FailureAsync());
+        Assert.Equal(0, _docker.UpCalls);
+    }
+
+    [Fact]
+    public async Task A_file_with_no_entry_for_the_branch_deploys_nothing()
+    {
+        WriteBosonFile("""
+            version: 1
+            deployments:
+              - branch: some-other-branch
+                hostname: other.example.com
+            """);
+
+        Assert.Contains("declares no deployment for main", await FailureAsync());
+        Assert.Equal(0, _docker.UpCalls);
+    }
+
+    [Fact]
+    public async Task A_file_claiming_a_different_hostname_stops_the_deploy()
+    {
+        // The file is the authority, and moving a hostname means routing, a
+        // certificate and the webhook address all moving with it.
+        WriteBosonFile("""
+            version: 1
+            deployments:
+              - branch: main
+                hostname: elsewhere.example.com
+            """);
+
+        Assert.Contains("elsewhere.example.com", await FailureAsync());
+        Assert.Equal(0, _docker.UpCalls);
+    }
+
+    [Fact]
+    public async Task A_named_env_set_with_no_file_on_the_host_stops_the_deploy()
+    {
+        WriteBosonFile($"""
+            version: 1
+            deployments:
+              - branch: main
+                hostname: {TestProjects.New().Hostname}
+                env: production
+            """);
+
+        var error = await FailureAsync();
+
+        Assert.Contains("production", error);
+        Assert.Contains(_dirs.Paths.EnvFile(Repo, "production"), error);
+    }
+
+    [Fact]
+    public async Task The_named_env_set_reaches_compose()
+    {
+        var envFile = _dirs.Paths.EnvFile(Repo, "production");
+
+        Directory.CreateDirectory(_dirs.Paths.EnvDir(Repo));
+        File.WriteAllText(envFile, "KEY=value\n");
+
+        WriteBosonFile($"""
+            version: 1
+            deployments:
+              - branch: main
+                hostname: {TestProjects.New().Hostname}
+                env: production
+            """);
+
+        await NewDeployer().DeployAsync(Repo, DeployTrigger.Manual);
+
+        Assert.Equal(envFile, _docker.VariablesPassed.Single().EnvFilePath);
+    }
+
+    private async Task<string> FailureAsync()
+    {
+        var result = await NewDeployer().DeployAsync(Repo, DeployTrigger.Manual);
+        var completed = Assert.IsType<DeployResult.Completed>(result);
+
+        Assert.False(completed.Succeeded);
+
+        return _deploys.Get(completed.LastDeployId)!.Error!;
     }
 
     [Fact]

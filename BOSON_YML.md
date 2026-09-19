@@ -109,9 +109,11 @@ The file is read after fetch and before build, alongside the check on what compo
 - two entries claim the same hostname, or the name belongs to another active deployment
 - a `{branch}` hostname collides with one another deployment of the same repository generated
 - `env` names a set that does not exist on the host
-- no entry matches the branch that was pushed, which deploys nothing and is not an error
+- no entry matches the branch a deploy was asked for
 
-A repository with no `_boson.yml` keeps the hostname, branch and environment file recorded when it was added.
+A push to a branch no entry matches deploys nothing, which is not an error: a repository decides which of its branches are deployed.
+
+A repository with no `_boson.yml` has nothing to deploy, and says so before it builds.
 
 ## Undecided
 

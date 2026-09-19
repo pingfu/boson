@@ -176,32 +176,32 @@ public sealed class Deployer(
             var composeName = RepoName.ComposeProjectName(project.Repo);
 
             // Read from the branch just fetched, so a branch is the authority on
-            // its own deployment. A file that cannot be honoured stops the
-            // deploy here rather than producing containers nobody asked for.
-            var declared = BosonFile.Find(projectDir, out var fileProblem);
+            // its own deployment. Everything it gets wrong stops the deploy here
+            // rather than producing containers nobody asked for.
+            var declared = BosonFile.Find(projectDir, out var fileProblem)
+                ?? throw new DeployStepException(
+                    fileProblem ?? $"no {BosonFile.FileName} at the root of {project.Repo}");
 
-            if (fileProblem is not null) throw new DeployStepException(fileProblem);
+            var entry = declared.Match(project.Branch)
+                ?? throw new DeployStepException(
+                    $"{BosonFile.FileName} declares no deployment for {project.Branch}");
 
-            var entry = declared?.Match(project.Branch);
+            if (entry.Hostname != project.Hostname)
+                throw new DeployStepException(
+                    $"{BosonFile.FileName} declares hostname {entry.Hostname} for {project.Branch}, " +
+                    $"and this project serves {project.Hostname}");
 
-            if (declared is not null && entry is null)
-                Log($"{BosonFile.FileName} declares no deployment for {project.Branch}");
-
-            var envSet = entry?.Env ?? BosonPaths.DefaultEnvSet;
+            var envSet = entry.Env ?? BosonPaths.DefaultEnvSet;
             var envFile = paths.EnvFile(project.Repo, envSet);
 
             Log($"env set {envSet} ({envFile})");
 
             // Only when the file asks for one by name: a project that declares
             // no set needs no file, and compose never reads the path.
-            if (entry?.Env is not null && !File.Exists(envFile))
+            if (entry.Env is not null && !File.Exists(envFile))
                 throw new DeployStepException(
                     $"{BosonFile.FileName} names env set {envSet} for {project.Branch}, " +
                     $"and {envFile} does not exist");
-
-            if (entry is not null && entry.Hostname != project.Hostname)
-                Log($"{BosonFile.FileName} declares hostname {entry.Hostname}, " +
-                    $"and this project serves {project.Hostname}");
 
             var variables = new ComposeVariables(project.UpstreamPort, envFile);
 
