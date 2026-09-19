@@ -4,6 +4,8 @@ Push-to-deploy for a single Linux server. Boson clones your GitHub repos, runs e
 
 Per project it takes three inputs: the repo, a public hostname, and the loopback port your compose file publishes.
 
+![Your CI pipeline stays; boson absorbs the image registry, deploy step, reverse proxy and TLS renewal that would otherwise sit between a merge and a live container.](assets/boson-architecture-light.svg)
+
 ## Install
 
 ```bash
@@ -51,6 +53,8 @@ Ctrl-C stops the progress display, not the add: complete the browser steps and t
 **Every push to the tracked branch deploys automatically**: fetch, `docker compose up -d --build`, live. Pushes that land mid-deploy are remembered: the newest commit deploys when the running one finishes, and a burst of pushes costs at most one extra deploy.
 
 `boson deploy org/my-app` deploys by hand: the first deploy after `add`, and any redeploy later. Safe to re-run. A deploy succeeds when `docker compose up` exits 0; add a compose `healthcheck` if you want a health gate.
+
+Recover a bad deploy by pushing a fix, or a revert. Every deploy takes the branch tip, so the next push replaces whatever is running. A build that fails leaves the previous container in place, so a broken commit costs a failed deploy rather than an outage; a commit that builds and then misbehaves is live until the next push.
 
 ### Reading GitHub's webhook dashboard
 

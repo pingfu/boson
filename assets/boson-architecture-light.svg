@@ -1,0 +1,165 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 76 1200 588" width="1200" height="588" role="img" aria-labelledby="t d">
+<title id="t">How Boson deploys a merge to main</title>
+<desc id="d">Two lanes from a GitHub push to a live site. Without Boson: CI pipeline, image registry, deploy step, reverse proxy and TLS. With Boson the CI pipeline is kept and the other four are absorbed into one server running the boson daemon, docker compose and Caddy, with one SQLite file of state.</desc>
+<defs><style>
+.sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+.h1 { font-size: 21px; font-weight: 700; fill: #1f2328; }
+.h2 { font-size: 13.5px; fill: #59636e; }
+.lane { fill: #f6f8fa; }
+.lane-b { fill: #eaf6f7; }
+.lane-t { font-size: 14px; font-weight: 700; fill: #59636e; }
+.lane-t-b { font-size: 14px; font-weight: 700; fill: #0e7c86; }
+.bt { font-size: 13px; font-weight: 700; fill: #1f2328; }
+.bs { font-size: 11px; fill: #59636e; }
+.foot { font-size: 12.5px; fill: #1f2328; }
+.lbl-b { font-size: 10.5px; fill: #0e7c86; }
+.col-t { font-size: 15px; font-weight: 700; fill: #1f2328; }
+.box { fill: #ffffff; stroke: #d0d7de; stroke-width: 1; }
+.box-b { fill: #ffffff; stroke: #0e7c86; stroke-width: 1.25; }
+.ln { stroke: #59636e; stroke-width: 1.4; fill: none; }
+.ln-b { stroke: #0e7c86; stroke-width: 1.6; fill: none; }
+.dashed { stroke-dasharray: 4 3; }
+.lock { fill: none; stroke: #0e7c86; stroke-width: 1.6; }
+.dot-o { fill: #ffffff; stroke: #59636e; stroke-width: 1.4; }
+.dot-a { fill: #0e7c86; }
+.pill-t { font-size: 9.5px; font-weight: 700; letter-spacing: 0.2px; }
+.pill-a rect { fill: #0e7c86; } .pill-a text { fill: #ffffff; }
+.pill-k rect { fill: #ffffff; stroke: #59636e; stroke-width: 1; } .pill-k text { fill: #59636e; }
+.conn { fill: none; stroke: #0e7c86; stroke-width: 1.4; stroke-dasharray: 3 3; }
+.pulse { fill: #0e7c86; stroke: #ffffff; stroke-width: 2; }
+
+.absorbed { opacity: 0.42; }
+</style>
+<marker id="ar" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#59636e"/></marker>
+<marker id="arb" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#0e7c86"/></marker>
+</defs>
+<rect width="1200" height="700" fill="#ffffff"/>
+
+
+<rect class="box" x="24" y="100" width="120" height="540" rx="8"/>
+<g class="ln" stroke-linecap="round"><line x1="84" y1="228" x2="84" y2="300"/><path d="M84,264 C84,244 66,252 66,232"/></g>
+<circle cx="84" cy="228" r="5" class="dot-o"/><circle cx="66" cy="232" r="5" class="dot-o"/><circle cx="84" cy="300" r="6" class="dot-a"/>
+<text class="sans col-t" x="84" y="340" text-anchor="middle">GitHub</text>
+<text class="mono bs" x="84" y="360" text-anchor="middle">org/my-app</text>
+<text class="sans bs" x="84" y="392" text-anchor="middle">a pull request</text>
+<text class="sans bs" x="84" y="408" text-anchor="middle">merges to</text>
+<text class="mono bt" x="84" y="428" text-anchor="middle">main</text>
+<text class="sans bs" x="84" y="452" text-anchor="middle">or any branch</text>
+<text class="sans bs" x="84" y="468" text-anchor="middle">you track</text>
+<rect class="box" x="1056" y="100" width="120" height="540" rx="8"/>
+<rect x="1101" y="252" width="30" height="24" rx="4" class="lock"/><path d="M1106,252 V244 a10,10 0 0 1 20,0 V252" class="lock"/><circle cx="1116" cy="264" r="3" class="dot-a"/>
+<text class="sans col-t" x="1116" y="340" text-anchor="middle">Live</text>
+<text class="mono bs" x="1116" y="360" text-anchor="middle">https://my-app</text>
+<text class="mono bs" x="1116" y="375" text-anchor="middle">.example.com</text>
+<text class="sans bs" x="1116" y="408" text-anchor="middle">new build serving</text>
+<text class="sans bs" x="1116" y="424" text-anchor="middle">on a valid</text>
+<text class="sans bs" x="1116" y="440" text-anchor="middle">certificate,</text>
+<text class="sans bs" x="1116" y="456" text-anchor="middle">every push</text>
+<rect x="170" y="100" width="860" height="215" rx="8" class="lane"/>
+<text class="sans lane-t" x="184" y="126">Without Boson</text>
+<line class="ln" x1="144" y1="193" x2="176" y2="193" marker-end="url(#ar)"/>
+<g id="top-ci" class="topbox kept" data-id="ci">
+<rect class="box" x="182" y="148" width="140" height="90" rx="6"/>
+<text class="sans bt" x="252" y="172" text-anchor="middle">CI pipeline</text>
+<text class="sans bs" x="252" y="192" text-anchor="middle">Actions, Jenkins</text>
+<text class="sans bs" x="252" y="208" text-anchor="middle">tests and checks</text>
+<text class="sans bs" x="252" y="224" text-anchor="middle">on every PR</text>
+</g>
+<g class="pill pill-k" data-for="ci"><rect x="276" y="140" width="38" height="16" rx="8"/><text class="sans pill-t" x="295.0" y="151.5" text-anchor="middle">kept</text></g>
+<line class="ln" x1="322" y1="193" x2="350" y2="193" marker-end="url(#ar)"/>
+<g id="top-registry" class="topbox absorbed" data-id="registry" data-target="daemon">
+<rect class="box" x="356" y="148" width="140" height="90" rx="6"/>
+<text class="sans bt" x="426" y="172" text-anchor="middle">Image registry</text>
+<text class="sans bs" x="426" y="192" text-anchor="middle">GHCR, Docker Hub</text>
+<text class="sans bs" x="426" y="208" text-anchor="middle">build here, push,</text>
+<text class="sans bs" x="426" y="224" text-anchor="middle">tokens to rotate</text>
+</g>
+<g class="pill pill-a" data-for="registry"><rect x="430" y="140" width="58" height="16" rx="8"/><text class="sans pill-t" x="459.0" y="151.5" text-anchor="middle">absorbed</text></g>
+<line class="ln" x1="496" y1="193" x2="524" y2="193" marker-end="url(#ar)"/>
+<g id="top-deploy" class="topbox absorbed" data-id="deploy" data-target="compose">
+<rect class="box" x="530" y="148" width="140" height="90" rx="6"/>
+<text class="sans bt" x="600" y="172" text-anchor="middle">Deploy step</text>
+<text class="sans bs" x="600" y="192" text-anchor="middle">SSH, deploy keys,</text>
+<text class="sans bs" x="600" y="208" text-anchor="middle">agents; a script</text>
+<text class="sans bs" x="600" y="224" text-anchor="middle">run on the server</text>
+</g>
+<g class="pill pill-a" data-for="deploy"><rect x="604" y="140" width="58" height="16" rx="8"/><text class="sans pill-t" x="633.0" y="151.5" text-anchor="middle">absorbed</text></g>
+<line class="ln" x1="670" y1="193" x2="698" y2="193" marker-end="url(#ar)"/>
+<g id="top-proxy" class="topbox absorbed" data-id="proxy" data-target="caddy">
+<rect class="box" x="704" y="148" width="140" height="90" rx="6"/>
+<text class="sans bt" x="774" y="172" text-anchor="middle">Reverse proxy</text>
+<text class="sans bs" x="774" y="192" text-anchor="middle">nginx, Traefik</text>
+<text class="sans bs" x="774" y="208" text-anchor="middle">a config block</text>
+<text class="sans bs" x="774" y="224" text-anchor="middle">per hostname</text>
+</g>
+<g class="pill pill-a" data-for="proxy"><rect x="778" y="140" width="58" height="16" rx="8"/><text class="sans pill-t" x="807.0" y="151.5" text-anchor="middle">absorbed</text></g>
+<line class="ln" x1="844" y1="193" x2="872" y2="193" marker-end="url(#ar)"/>
+<g id="top-tls" class="topbox absorbed" data-id="tls" data-target="caddy">
+<rect class="box" x="878" y="148" width="140" height="90" rx="6"/>
+<text class="sans bt" x="948" y="172" text-anchor="middle">TLS</text>
+<text class="sans bs" x="948" y="192" text-anchor="middle">certbot, renewals</text>
+<text class="sans bs" x="948" y="208" text-anchor="middle">a cron job</text>
+<text class="sans bs" x="948" y="224" text-anchor="middle">to babysit</text>
+</g>
+<g class="pill pill-a" data-for="tls"><rect x="952" y="140" width="58" height="16" rx="8"/><text class="sans pill-t" x="981.0" y="151.5" text-anchor="middle">absorbed</text></g>
+<line class="ln" x1="1018" y1="193" x2="1050" y2="193" marker-end="url(#ar)"/>
+<rect x="170" y="335" width="860" height="305" rx="8" class="lane-b"/>
+<text class="sans lane-t-b" x="184" y="361">With Boson</text>
+<g id="boson-lane">
+<rect class="box-b" x="200" y="372" width="810" height="248" rx="8" stroke-dasharray="4 3"/>
+<text class="sans lbl-b" x="722" y="390" text-anchor="middle">your server: Linux, Docker, systemd</text>
+<line class="ln-b" x1="144" y1="455" x2="206" y2="455" marker-end="url(#arb)"/>
+<text class="sans lbl-b" x="172" y="445" text-anchor="middle">webhook</text>
+<line class="ln-b dashed" x1="212" y1="486" x2="150" y2="486" marker-end="url(#arb)"/>
+<text class="sans lbl-b" x="172" y="500" text-anchor="middle">git fetch</text>
+<g id="b-daemon" class="bbox" data-id="daemon">
+<rect class="box-b" x="212" y="400" width="200" height="126" rx="6"/>
+<text x="224" y="422"><tspan class="mono bt">boson serve</tspan><tspan class="sans bs" dx="7">systemd daemon</tspan></text>
+<text class="sans bs" x="224" y="442">verifies the push signature</text>
+<text class="sans bs" x="224" y="457">mints a short-lived App token</text>
+<text class="sans bs" x="224" y="472">fetches the branch tip to /srv</text>
+<text class="sans bs" x="224" y="487">builds on the host: no registry</text>
+</g>
+<line class="ln-b" x1="412" y1="455" x2="436" y2="455" marker-end="url(#arb)"/>
+<g id="b-compose" class="bbox" data-id="compose">
+<rect class="box-b" x="442" y="400" width="170" height="126" rx="6"/>
+<text x="454" y="422"><tspan class="mono bt">docker compose</tspan></text>
+<text class="mono bs" x="454" y="442">up -d --build</text>
+<text class="sans bs" x="454" y="457">runs the repo&#x27;s compose file</text>
+<text class="sans bs" x="454" y="472">and swaps the container;</text>
+<text class="sans bs" x="454" y="487">a failed build leaves</text>
+<text class="sans bs" x="454" y="502">the old container up</text>
+</g>
+<line class="ln-b" x1="612" y1="455" x2="636" y2="455" marker-end="url(#arb)"/>
+<g id="b-app" class="bbox" data-id="app">
+<rect class="box-b" x="642" y="400" width="160" height="126" rx="6"/>
+<text x="654" y="422"><tspan class="sans bt">your app container</tspan></text>
+<text class="sans bs" x="654" y="442">from the compose file,</text>
+<text class="sans bs" x="654" y="457">bound to loopback</text>
+<text class="mono bs" x="654" y="472">127.0.0.1:8080</text>
+</g>
+<line class="ln-b" x1="802" y1="455" x2="826" y2="455" marker-end="url(#arb)"/>
+<g id="b-caddy" class="bbox" data-id="caddy">
+<rect class="box-b" x="832" y="400" width="162" height="126" rx="6"/>
+<text x="844" y="422"><tspan class="sans bt">Caddy</tspan></text>
+<text class="sans bs" x="844" y="442">ports 80 and 443</text>
+<text class="sans bs" x="844" y="457">certificates issued and</text>
+<text class="sans bs" x="844" y="472">renewed for every hostname</text>
+<text class="sans bs" x="844" y="487">routes my-app.example.com</text>
+<text class="mono bs" x="844" y="502">to 127.0.0.1:8080</text>
+<text class="sans bs" x="844" y="517">also fronts the webhook</text>
+</g>
+<line class="ln-b" x1="994" y1="455" x2="1050" y2="455" marker-end="url(#arb)"/>
+<text class="sans lbl-b" x="1024" y="445" text-anchor="middle">https</text>
+<g id="b-db" class="bbox"><rect class="box" x="212" y="540" width="400" height="40" rx="6"/>
+<text x="224" y="565"><tspan class="mono bt">boson.db</tspan><tspan class="sans bs" dx="8">the only state on the host; back it up and init rebuilds everything else</tspan></text>
+</g>
+</g>
+<path class="conn" data-for="registry" data-target="daemon" d="M426,238 V296 H312 V394" marker-end="url(#arb)"/>
+<path class="conn" data-for="deploy" data-target="compose" d="M600,238 V296 H527 V394" marker-end="url(#arb)"/>
+<path class="conn" data-for="proxy" data-target="caddy" d="M774,238 V296 H900 V394" marker-end="url(#arb)"/>
+<path class="conn" data-for="tls" data-target="caddy" d="M948,238 V296 H926 V394" marker-end="url(#arb)"/>
+
+
+</svg>
