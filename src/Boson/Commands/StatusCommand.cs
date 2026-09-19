@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Globalization;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Boson.Caddy;
 using Boson.Storage;
 using Boson.Util;
@@ -74,17 +75,13 @@ public static class StatusCommand
             Console.WriteLine(JsonSerializer.Serialize(
                 new StatusEntry(adminHostname, daemon is not null, daemon?.Version,
                     daemon?.StartedAt, VersionInfo.Version, rows),
-                new JsonSerializerOptions
-                {
-                    WriteIndented = true,
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                }));
+                StatusJson.Default.StatusEntry));
 
             return ExitCodes.Success;
         }
 
-        AnsiConsole.MarkupLine($"[grey]daemon[/]  {Markup.Escape(DescribeDaemon(daemon, now))}");
-        AnsiConsole.MarkupLine($"[grey]admin [/]  {Markup.Escape(adminHostname ?? "unset")}");
+        AnsiConsole.MarkupLine($"boson version   [grey]{Markup.Escape(DescribeDaemon(daemon, now))}[/]");
+        AnsiConsole.MarkupLine($"admin hostname  [grey]{Markup.Escape(adminHostname ?? "unset")}[/]");
         AnsiConsole.WriteLine();
 
         if (rows.Count == 0)
@@ -298,6 +295,7 @@ public static class StatusCommand
 
     internal sealed record DaemonInfo(string? Version, DateTimeOffset? StartedAt);
 
+
     internal sealed record StatusEntry(
         string? AdminHostname, bool DaemonRunning, string? DaemonVersion,
         DateTimeOffset? DaemonStartedAt, string CliVersion,
@@ -311,3 +309,13 @@ public static class StatusCommand
         long Id, string Status, string? CommitSha, string? StartedAt,
         string? FinishedAt, string LogPath, string? Error);
 }
+
+/// <summary>
+/// Source-generated so --json survives trimming: reflection over these records
+/// is invisible to the trimmer, and what it produces when the properties are
+/// trimmed away is an empty object at runtime rather than a build error.
+/// </summary>
+[JsonSourceGenerationOptions(WriteIndented = true,
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(StatusCommand.StatusEntry))]
+internal sealed partial class StatusJson : JsonSerializerContext;
