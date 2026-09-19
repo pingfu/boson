@@ -1,6 +1,8 @@
 # boson
 
-Push-to-deploy for a single Linux server. Boson clones your GitHub repos, runs each one with `docker compose up -d --build`, routes a public hostname to each with automatic TLS, and redeploys on every push.
+Push-to-deploy for a single Linux server.
+
+Boson runs on your production host and automatically clones your GitHub repos and runs each one with `docker compose up -d --build`, routes a public hostname to each with automatic TLS using Caddy, and redeploys on every push.
 
 Per project it takes three inputs: the repo, a public hostname, and the loopback port your compose file publishes.
 
@@ -9,8 +11,8 @@ Per project it takes three inputs: the repo, a public hostname, and the loopback
 ## Install
 
 ```bash
-curl -fL https://github.com/pingfu/boson/releases/latest/download/boson-linux-x64 \
-  -o /usr/local/bin/boson && chmod +x /usr/local/bin/boson
+curl -fL https://github.com/pingfu/boson/releases/latest/download/boson-linux-x64 -o /tmp/boson
+install -m 755 /tmp/boson /usr/local/bin/boson
 
 boson init deploy.example.com
 ```
@@ -83,11 +85,25 @@ Run every command as root: the CLI manages the platform's user, systemd unit and
 
 Exit codes: `0` success · `1` user error · `2` runtime failure · `3` deploy already running · `99` internal bug (file an issue).
 
+`https://deploy.example.com/_boson/health` returns the running version, and proves the path GitHub's webhooks take. When it doesn't answer, `systemctl status boson` says why.
+
+`boson list` shows hostname, branch, webhook, container states and last deploy for each project. It reads the database and Docker directly, so a full table doesn't mean the daemon is up.
+
 For everything else, the usual tools work: `docker logs` for container output, `journalctl -u boson` for the daemon, `/var/log/boson/deploys/` for per-deploy build output.
 
-Upgrading boson: re-run the install `curl`, then `systemctl restart boson`.
-
 Re-running `boson init` rebuilds everything derived (routing, the systemd unit) from the database: the recovery move after restoring a backup or manual fiddling. Reboots take care of themselves.
+
+## Upgrade
+
+```bash
+curl -fL https://github.com/pingfu/boson/releases/latest/download/boson-linux-x64 -o /tmp/boson
+install -m 755 /tmp/boson /usr/local/bin/boson
+
+systemctl restart boson
+boson --version
+```
+
+Your sites keep serving throughout, and the restart waits for a deploy in flight to finish.
 
 ## Back up one file
 

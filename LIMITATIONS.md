@@ -6,4 +6,6 @@
 
 - Nothing deletes old images, so disk use grows with every deploy.
 
+- Downgrades are not supported. An upgrade can migrate the database into a shape an older binary refuses to open, so going back means restoring `boson.db` from a backup taken before the upgrade, or deleting it and re-adding every project by hand.
+
 - No licence file, which leaves the repo all rights reserved by default.

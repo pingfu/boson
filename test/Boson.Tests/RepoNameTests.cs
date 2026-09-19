@@ -8,7 +8,7 @@ public class RepoNameTests
     [InlineData("Acme/Site", "acme/site")]
     [InlineData("  acme/site  ", "acme/site")]
     [InlineData("acme/site/", "acme/site")]
-    [InlineData("marketcanary6/market-canary", "marketcanary6/market-canary")]
+    [InlineData("acme6/widget-store", "acme6/widget-store")]
     public void Canonicalises_valid_repos(string input, string expected)
     {
         Assert.True(RepoName.TryCanonicalise(input, out var repo));

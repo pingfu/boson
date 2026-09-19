@@ -91,11 +91,11 @@ public class CaddyConfigBuilderTests
     [Fact]
     public void Project_webhook_path_routes_to_the_daemon_ahead_of_the_container()
     {
-        var config = Build(TestProjects.New(hostname: "marketcanary.co", port: 8080));
+        var config = Build(TestProjects.New(hostname: "example.org", port: 8080));
         var routes = Routes(config);
 
         var webhook = routes[2]!;
-        Assert.Equal("marketcanary.co", webhook["match"]![0]!["host"]![0]!.GetValue<string>());
+        Assert.Equal("example.org", webhook["match"]![0]!["host"]![0]!.GetValue<string>());
         Assert.Equal("/_boson/webhook/*", webhook["match"]![0]!["path"]![0]!.GetValue<string>());
         Assert.Equal($"127.0.0.1:{CaddyConfigBuilder.DaemonPort}",
             webhook["handle"]![1]!["upstreams"]![0]!["dial"]!.GetValue<string>());
@@ -125,12 +125,12 @@ public class CaddyConfigBuilderTests
     {
         // A public site must fail loudly rather than quietly serve an untrusted
         // certificate, so only the control hostname carries a policy.
-        var policies = Build(TestProjects.New(hostname: "marketcanary.co"))
+        var policies = Build(TestProjects.New(hostname: "example.org"))
             ["apps"]!["tls"]!["automation"]!["policies"]!.AsArray();
 
         var subjects = policies.SelectMany(p => p!["subjects"]!.AsArray())
             .Select(s => s!.GetValue<string>());
-        Assert.DoesNotContain("marketcanary.co", subjects);
+        Assert.DoesNotContain("example.org", subjects);
     }
 
     [Fact]
@@ -149,20 +149,20 @@ public class CaddyConfigBuilderTests
     [Fact]
     public void Every_project_gets_a_www_308_route_before_its_proxy_route()
     {
-        var config = Build(TestProjects.New(hostname: "marketcanary.co", port: 8080));
+        var config = Build(TestProjects.New(hostname: "example.org", port: 8080));
         var routes = Routes(config);
 
         Assert.Equal(5, routes.Count);
         var redirect = routes[1]!;
-        Assert.Equal("www.marketcanary.co", redirect["match"]![0]!["host"]![0]!.GetValue<string>());
+        Assert.Equal("www.example.org", redirect["match"]![0]!["host"]![0]!.GetValue<string>());
         var handler = redirect["handle"]![0]!;
         Assert.Equal("static_response", handler["handler"]!.GetValue<string>());
         Assert.Equal(308, handler["status_code"]!.GetValue<int>());
-        Assert.Equal("https://marketcanary.co{http.request.uri}",
+        Assert.Equal("https://example.org{http.request.uri}",
             handler["headers"]!["Location"]![0]!.GetValue<string>());
 
         // The apex still proxies, after its redirect and webhook routes.
-        Assert.Equal("marketcanary.co", routes[3]!["match"]![0]!["host"]![0]!.GetValue<string>());
+        Assert.Equal("example.org", routes[3]!["match"]![0]!["host"]![0]!.GetValue<string>());
     }
 
     [Fact]
