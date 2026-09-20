@@ -44,6 +44,15 @@ public class StatusCommandTests
         Assert.Equal("0.1.13", StatusCommand.ShortenVersion("0.1.13"));
     }
 
+    [Theory]
+    [InlineData("marketcanary.co", new string[0], "marketcanary.co")]
+    [InlineData("marketcanary.co", new[] { "www.marketcanary.co" }, "marketcanary.co (+1)")]
+    [InlineData("marketcanary.co", new[] { "www.marketcanary.co", "marketcanary.com" }, "marketcanary.co (+2)")]
+    public void Hostname_cell_counts_aliases(string hostname, string[] aliases, string expected)
+    {
+        Assert.Equal(expected, StatusCommand.FormatHostname(hostname, aliases));
+    }
+
     [Fact]
     public void A_silent_daemon_names_the_command_that_diagnoses_it()
     {

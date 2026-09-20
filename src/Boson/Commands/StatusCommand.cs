@@ -108,13 +108,9 @@ public static class StatusCommand
                   $"{Shorten(r.LastDeploy.CommitSha)} " +
                   Timestamp(r.LastDeploy.FinishedAt ?? r.LastDeploy.StartedAt, now);
 
-            // One name per line: an alias is a hostname of its own, and reading
-            // a wrapped list of them in a cell is how you miss one.
-            var names = string.Join('\n', new[] { r.Hostname }.Concat(r.Aliases));
-
             table.AddRow(
                 Markup.Escape(r.Repo),
-                Markup.Escape(names),
+                Markup.Escape(FormatHostname(r.Hostname, r.Aliases)),
                 r.Port.ToString(),
                 Markup.Escape(r.Branch),
                 r.WebhookActive ? "active" : "inactive",
@@ -203,6 +199,9 @@ public static class StatusCommand
             ? $"{dbTime} ({Ago(when, now)})"
             : dbTime;
     }
+
+    internal static string FormatHostname(string hostname, IReadOnlyList<string> aliases) =>
+        aliases.Count == 0 ? hostname : $"{hostname} (+{aliases.Count})";
 
     internal static DateTimeOffset? ParseDbTime(string? dbTime) => DbTime.Parse(dbTime);
 
