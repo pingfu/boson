@@ -17,9 +17,9 @@ GitHub push webhook -> boson -> git fetch/reset -> docker compose up -d --build
 ```
 
 1. **Point DNS at your server** for boson's admin hostname and each deployment hostname.
-2. **Run `boson init <hostname>` to install boson on your server**, which will receives GitHub webhooks and route traffic to your deployed Docker containers.
+2. **Run `boson init <hostname>` to install boson on your server**, which receives GitHub webhooks and routes traffic to your deployed Docker containers.
 3. **Run `boson add <org/name>` to connect your server to GitHub and fetch your private repo.**
-4. **Setup your projects secrets** in `/var/lib/boson/env/<org>/<name>/...` for each container runtime environment.
+4. **Set up your project secrets** in `/var/lib/boson/env/<org>/<name>/...` for each container runtime environment.
 5. **Use `boson deploy <org/name>` to build and run** your project's containers.
 
 General challenges boson is avoiding:
@@ -125,6 +125,8 @@ Push a branch that matches a pattern entry and boson creates its deployment on t
 
 `boson deploy org/my-app` deploys by hand: the first deploy after `add`, and any redeploy later. Safe to re-run. A deploy succeeds when `docker compose up` exits 0; add a compose `healthcheck` if you want a health gate.
 
+`boson deploy org/my-app --branch feature/x` redeploys an existing deployment. Pattern branches are first created by pushes, because the push is what names the branch that matched the pattern.
+
 Recover a bad deploy by pushing a fix, or a revert. Every deploy takes the branch tip, so the next push replaces whatever is running. A build that fails leaves the previous container in place, so a broken commit costs a failed deploy rather than an outage; a commit that builds and then misbehaves is live until the next push.
 
 ### Reading GitHub's webhook dashboard
@@ -152,7 +154,7 @@ boson uninstall               # remove the platform
 
 Run every command as root: the CLI manages the platform's user, systemd unit and data directories, and the daemon's socket admits only root and the `boson` user.
 
-Exit codes: `0` success Â· `1` user error Â· `2` runtime failure Â· `3` deploy already running Â· `99` internal bug (file an issue).
+Exit codes: `0` success, `1` user error, `2` runtime failure, `3` deploy already running, `99` internal bug (file an issue).
 
 `https://deploy.example.com/_boson/health` returns the running version. When it doesn't answer, `systemctl status boson` says why.
 

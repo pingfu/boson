@@ -129,7 +129,7 @@ public sealed class DeploymentEntry
 
     /// <summary>The hostname this entry serves for a branch, with {branch} filled in.</summary>
     public string HostnameFor(string branch) =>
-        Hostname.Replace(BranchPlaceholder, BranchLabel.From(branch), StringComparison.Ordinal);
+        Hostname.Replace(BranchPlaceholder, DnsLabel.From(branch), StringComparison.Ordinal);
 
     public IEnumerable<string> AllNames() => new[] { Hostname }.Concat(Aliases);
 

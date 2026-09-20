@@ -19,6 +19,7 @@ public class DeployerTests : IDisposable
     private readonly DeploymentLocks _locks = new();
     private readonly FakeGitCli _git = new();
     private readonly FakeDockerCli _docker = new();
+    private readonly ImageRetainer _imageRetainer;
     private readonly FakeMinter _minter = new();
     private readonly FakeCaddySynchroniser _caddy = new();
     private readonly Deployment _deployment;
@@ -28,6 +29,7 @@ public class DeployerTests : IDisposable
         _projects = new ProjectsRepository(_db.Db);
         _deployments = new DeploymentsRepository(_db.Db);
         _deploys = new DeploysRepository(_db.Db);
+        _imageRetainer = new ImageRetainer(_docker);
 
         _deployment = TestProjects.Insert(_projects, _deployments);
 
@@ -42,14 +44,14 @@ public class DeployerTests : IDisposable
     /// <summary>A deploy reads the file the fetch left behind, so a checkout without one has nothing to deploy.</summary>
     private void WriteBosonFile(string yaml, string branch = Branch)
     {
-        var dir = _dirs.Paths.CheckoutDir(Repo, BranchLabel.From(branch));
+        var dir = _dirs.Paths.CheckoutDir(Repo, DnsLabel.From(branch));
 
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, BosonFile.FileName), yaml);
     }
 
     private Deployer NewDeployer() => new(
-        _projects, _deployments, _deploys, _minter, _git, _docker, _caddy, _locks,
+        _projects, _deployments, _deploys, _minter, _git, _docker, _imageRetainer, _caddy, _locks,
         _dirs.Paths, NullLogger.Instance);
 
     private Deployment Current() => _deployments.GetByBranch(Repo, Branch)!;
@@ -154,7 +156,7 @@ public class DeployerTests : IDisposable
     public async Task A_checkout_with_no_boson_file_has_nothing_to_deploy()
     {
         File.Delete(Path.Combine(
-            _dirs.Paths.CheckoutDir(Repo, BranchLabel.From(Branch)), BosonFile.FileName));
+            _dirs.Paths.CheckoutDir(Repo, DnsLabel.From(Branch)), BosonFile.FileName));
 
         Assert.Contains($"no {BosonFile.FileName}", await FailureAsync());
         Assert.Equal(0, _docker.UpCalls);
@@ -187,7 +189,7 @@ public class DeployerTests : IDisposable
         var result = await NewDeployer().DeployAsync(Repo, "scratch", DeployTrigger.Webhook);
 
         Assert.IsType<DeployResult.NotDeclared>(result);
-        Assert.False(Directory.Exists(_dirs.Paths.CheckoutDir(Repo, BranchLabel.From("scratch"))));
+        Assert.False(Directory.Exists(_dirs.Paths.CheckoutDir(Repo, DnsLabel.From("scratch"))));
     }
 
     [Fact]
@@ -209,7 +211,7 @@ public class DeployerTests : IDisposable
 
         var created = _deployments.GetByBranch(Repo, "feature/search")!;
 
-        Assert.Equal($"{BranchLabel.From("feature/search")}.preview.example.com", created.Hostname);
+        Assert.Equal($"{DnsLabel.From("feature/search")}.preview.example.com", created.Hostname);
         Assert.Equal("7d", created.ExpireAfter);
         Assert.NotEqual(_deployment.HostPort, created.HostPort);
         Assert.True(_caddy.SyncCalls > 0);
@@ -274,37 +276,40 @@ public class DeployerTests : IDisposable
     }
 
     [Fact]
-    public async Task Retention_keeps_the_newest_images_and_removes_the_rest()
+    public async Task Retention_runs_once_the_deploy_has_succeeded()
     {
-        var sha = await DeployAndGetShaAsync();
-
-        // keep: 3 counts the one just built, so old1 and old2 stay and old3 goes.
-        Assert.Equal(["acme/site-web:old3"], _docker.ImagesRemoved);
-        Assert.DoesNotContain($"acme/site-web:{sha}", _docker.ImagesRemoved);
-    }
-
-    [Fact]
-    public async Task Retention_leaves_images_this_deploy_did_not_tag()
-    {
-        _docker.ConfigStdOut = _ =>
-            """
-            {"services":{"web":{"build":{},"image":"someone/else:v1","ports":[
-              {"host_ip":"127.0.0.1","target":3000,"published":"30000"}]}}}
-            """;
+        // What it keeps and what it refuses to touch is ImageRetainerTests;
+        // this is only that a successful deploy reaches it, with the commit it
+        // built and the count the file declared.
+        _docker.ImageTags["acme/site-web"] =
+        [
+            _git.NextSha,
+            "0000000200000000000000000000000000000000",
+            "0000000300000000000000000000000000000000",
+            "0000000400000000000000000000000000000000",
+        ];
 
         await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
 
-        Assert.Empty(_docker.ImagesRemoved);
+        Assert.Equal(["acme/site-web:0000000400000000000000000000000000000000"], _docker.ImagesRemoved);
     }
 
-    private async Task<string> DeployAndGetShaAsync()
+    [Fact]
+    public async Task Retention_does_not_run_when_the_deploy_failed()
     {
-        _docker.ImageTags["acme/site-web"] = [_git.NextSha, "old1", "old2", "old3"];
+        _docker.UpExitCode = 1;
+        _docker.ImageTags["acme/site-web"] =
+        [
+            _git.NextSha,
+            "0000000200000000000000000000000000000000",
+            "0000000300000000000000000000000000000000",
+            "0000000400000000000000000000000000000000",
+        ];
 
-        var result = await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
-        var completed = Assert.IsType<DeployResult.Completed>(result);
+        await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
 
-        return _deploys.Get(completed.LastDeployId)!.CommitSha!;
+        // The previous image is what the running containers came from.
+        Assert.Empty(_docker.ImagesRemoved);
     }
 
     private async Task<string> FailureAsync()
@@ -406,6 +411,18 @@ public class DeployerTests : IDisposable
         Assert.True(_caddy.SyncCalls > 0);
 
         // The checkout stays, so a push brings the deployment back.
-        Assert.True(Directory.Exists(_dirs.Paths.CheckoutDir(Repo, _deployment.Label)));
+        Assert.True(Directory.Exists(_dirs.Paths.CheckoutDir(Repo, _deployment.DnsLabel)));
+    }
+
+    [Fact]
+    public async Task Tearing_down_a_deployment_with_a_held_lock_does_nothing()
+    {
+        _locks.TryEnter(Deployer.LockKey(Repo, Branch));
+
+        await NewDeployer().TearDownAsync(_deployment);
+
+        Assert.Empty(_docker.DownedProjects);
+        Assert.NotNull(_deployments.GetByBranch(Repo, Branch));
+        Assert.True(_locks.IsHeld(Deployer.LockKey(Repo, Branch)));
     }
 }

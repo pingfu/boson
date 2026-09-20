@@ -63,7 +63,8 @@ public sealed class DeployerIntegrationTests : IDisposable
 
         var deployer = new Deployer(
             projects, deployments, deploys, new FakeMinter(), git, _docker,
-            new FakeCaddySynchroniser(), new DeploymentLocks(), _dirs.Paths, NullLogger.Instance);
+            new ImageRetainer(_docker), new FakeCaddySynchroniser(), new DeploymentLocks(),
+            _dirs.Paths, NullLogger.Instance);
 
         var result = await deployer.DeployAsync(Repo, "main", DeployTrigger.Manual);
 

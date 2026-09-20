@@ -36,7 +36,7 @@ public static class TestProjects
         ProjectId = projectId,
         Repo = repo,
         Branch = branch,
-        Label = BranchLabel.From(branch),
+        DnsLabel = DnsLabel.From(branch),
         Hostname = hostname,
         Aliases = aliases,
         HostPort = port,

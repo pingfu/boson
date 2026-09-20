@@ -46,14 +46,10 @@ CREATE TABLE deployments (
 
   branch         TEXT NOT NULL,   -- the true ref name, which the label cannot
                                   -- be reversed into
-  label          TEXT NOT NULL,   -- branch reduced to a DNS label: names the
-                                  -- checkout directory and the compose project,
-                                  -- so both match the hostname on sight
+  dns_label      TEXT NOT NULL,   -- branch reduced to a DNS label: the checkout
+                                  -- directory and the compose project are named
+                                  -- after it, so both match the hostname on sight
   hostname       TEXT NOT NULL,
-  aliases        TEXT NOT NULL DEFAULT '',  -- comma-separated names that 308 to
-                                            -- hostname; stored because Caddy's
-                                            -- config is rebuilt from this table
-                                            -- with no checkout in reach
   host_port      INTEGER NOT NULL CHECK (host_port BETWEEN 1 AND 65535),
 
   env_set        TEXT,            -- null when the branch names none
@@ -73,9 +69,21 @@ CREATE TABLE deployments (
 -- Active-scoped for the same reason as the repo index: tearing a branch down
 -- archives it, and the name, port and directory have to come free.
 CREATE UNIQUE INDEX uniq_active_branch   ON deployments(project_id, branch) WHERE archived_at IS NULL;
-CREATE UNIQUE INDEX uniq_active_label    ON deployments(project_id, label)  WHERE archived_at IS NULL;
+CREATE UNIQUE INDEX uniq_active_label    ON deployments(project_id, dns_label) WHERE archived_at IS NULL;
 CREATE UNIQUE INDEX uniq_deployment_host ON deployments(hostname)           WHERE archived_at IS NULL;
 CREATE UNIQUE INDEX uniq_deployment_port ON deployments(host_port)          WHERE archived_at IS NULL;
+
+-- Every public name held by an active deployment. The canonical hostname is
+-- stored here too, so an alias cannot collide with another deployment's
+-- hostname or another alias.
+CREATE TABLE deployment_names (
+  deployment_id INTEGER NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL,
+  kind          TEXT NOT NULL CHECK (kind IN ('primary', 'alias')),
+  PRIMARY KEY (deployment_id, name)
+);
+
+CREATE UNIQUE INDEX uniq_deployment_name ON deployment_names(name);
 
 CREATE TABLE deploys (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,

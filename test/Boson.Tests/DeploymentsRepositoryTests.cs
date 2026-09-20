@@ -21,7 +21,7 @@ public class DeploymentsRepositoryTests
         Assert.Equal(inserted.Id, d.Id);
         Assert.Equal("acme/site", d.Repo);
         Assert.Equal("main", d.Branch);
-        Assert.Equal("main", d.Label);
+        Assert.Equal("main", d.DnsLabel);
         Assert.Equal("site.example.com", d.Hostname);
         Assert.Equal(["www.site.example.com"], d.AliasList);
         Assert.Equal(30000, d.HostPort);
@@ -110,6 +110,39 @@ public class DeploymentsRepositoryTests
 
         Assert.Throws<ProjectCollisionException>(() =>
             deployments.SetDeclared(develop.Id, main.Hostname, "", null, null));
+    }
+
+    [Fact]
+    public void An_alias_cannot_claim_another_deployments_hostname()
+    {
+        using var db = new TempDb();
+        var projects = new ProjectsRepository(db.Db);
+        var deployments = new DeploymentsRepository(db.Db);
+
+        var main = TestProjects.Insert(projects, deployments);
+
+        Assert.Throws<ProjectCollisionException>(() =>
+            TestProjects.Insert(projects, deployments,
+                branch: "develop",
+                hostname: "staging.example.com",
+                aliases: main.Hostname,
+                port: 30001));
+    }
+
+    [Fact]
+    public void A_hostname_cannot_claim_another_deployments_alias()
+    {
+        using var db = new TempDb();
+        var projects = new ProjectsRepository(db.Db);
+        var deployments = new DeploymentsRepository(db.Db);
+
+        TestProjects.Insert(projects, deployments, aliases: "www.site.example.com");
+
+        Assert.Throws<ProjectCollisionException>(() =>
+            TestProjects.Insert(projects, deployments,
+                branch: "develop",
+                hostname: "www.site.example.com",
+                port: 30001));
     }
 
     [Fact]

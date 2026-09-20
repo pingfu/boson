@@ -210,7 +210,7 @@ public sealed class ManifestFlowOrchestrator(
                 // at `main` that a repository is free to disagree with.
                 defaultBranch = await github.GetDefaultBranchAsync(entry.Repo, token.Value);
 
-                checkoutDir = paths.CheckoutDir(entry.Repo, BranchLabel.From(defaultBranch));
+                checkoutDir = paths.CheckoutDir(entry.Repo, DnsLabel.From(defaultBranch));
 
                 await git.FetchAndResetAsync(checkoutDir, entry.Repo, defaultBranch, token.Value);
             }
@@ -239,9 +239,10 @@ public sealed class ManifestFlowOrchestrator(
             await caddy.SyncAsync();
 
             // The App was created pointing at the control plane, which GitHub
-            // may not be able to reach. Deliveries go to the default branch's
-            // own hostname, which only the clone could name.
-            var primary = deployments.GetByBranch(entry.Repo, defaultBranch);
+            // may not be able to reach. The webhook is repository-level, so any
+            // deployment hostname can carry it.
+            var primary = deployments.GetByBranch(entry.Repo, defaultBranch)
+                          ?? deployments.ListActiveForRepo(entry.Repo).FirstOrDefault();
 
             if (primary is not null)
             {
@@ -300,7 +301,7 @@ public sealed class ManifestFlowOrchestrator(
                 ProjectId = projectId,
                 Repo = entry.Repo,
                 Branch = declaration.Branch,
-                Label = BranchLabel.From(declaration.Branch),
+                DnsLabel = DnsLabel.From(declaration.Branch),
                 Hostname = hostname,
                 Aliases = string.Join(',', declaration.Aliases),
                 HostPort = HostPortAllocator.Allocate(

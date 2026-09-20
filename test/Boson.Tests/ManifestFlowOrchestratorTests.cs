@@ -51,7 +51,7 @@ public sealed class ManifestFlowOrchestratorTests : IDisposable
 
     private void WriteBosonFile(string yaml, string branch = "main")
     {
-        var dir = _dirs.Paths.CheckoutDir(Repo, BranchLabel.From(branch));
+        var dir = _dirs.Paths.CheckoutDir(Repo, DnsLabel.From(branch));
 
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, BosonFile.FileName), yaml);
@@ -186,6 +186,23 @@ public sealed class ManifestFlowOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task Webhook_moves_to_a_declared_hostname_when_default_branch_is_not_deployed()
+    {
+        _github.DefaultBranch = "trunk";
+
+        WriteBosonFile("""
+            version: 1
+            deployments:
+              - branch: production
+                hostname: site.example.com
+            """, branch: "trunk");
+
+        await RunToInstalledAsync();
+
+        Assert.Equal("https://site.example.com/_boson/webhook/acme/site", _github.WebhookUrlSet);
+    }
+
+    [Fact]
     public async Task A_pattern_entry_makes_no_deployment_until_a_branch_matches_it()
     {
         WriteBosonFile("""
@@ -254,7 +271,7 @@ public sealed class ManifestFlowOrchestratorTests : IDisposable
         // The App's keys are issued once, so a file that does not read is a
         // push away from fixed and never a reason to throw them away.
         File.Delete(Path.Combine(
-            _dirs.Paths.CheckoutDir(Repo, BranchLabel.From("main")), BosonFile.FileName));
+            _dirs.Paths.CheckoutDir(Repo, DnsLabel.From("main")), BosonFile.FileName));
 
         var token = await RunToInstalledAsync();
 

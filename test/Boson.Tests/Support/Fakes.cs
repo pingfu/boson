@@ -91,15 +91,21 @@ public sealed class FakeDockerCli : IDockerCli
     /// <summary>Tags `docker images` reports, newest first, keyed by image name.</summary>
     public readonly Dictionary<string, List<string>> ImageTags = [];
     public readonly List<string> ImagesRemoved = [];
+    public int ImageTagsExitCode;
+    public int ImageRemoveExitCode;
 
     public Task<ProcessResult> ImageTagsAsync(string imageName, CancellationToken ct = default) =>
         Task.FromResult(new ProcessResult(
-            0, string.Join('\n', ImageTags.GetValueOrDefault(imageName, [])), ""));
+            ImageTagsExitCode,
+            ImageTagsExitCode == 0 ? string.Join('\n', ImageTags.GetValueOrDefault(imageName, [])) : "",
+            ImageTagsExitCode == 0 ? "" : "no such image"));
 
     public Task<ProcessResult> ImageRemoveAsync(string reference, CancellationToken ct = default)
     {
         lock (ImagesRemoved) ImagesRemoved.Add(reference);
-        return Task.FromResult(Ok());
+
+        return Task.FromResult(new ProcessResult(
+            ImageRemoveExitCode, "", ImageRemoveExitCode == 0 ? "" : "image is in use"));
     }
 }
 

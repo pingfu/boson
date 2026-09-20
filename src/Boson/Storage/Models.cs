@@ -35,11 +35,14 @@ public sealed record Deployment
     public required string Branch { get; init; }
 
     /// <summary>The branch as a DNS label: the checkout directory and compose project name.</summary>
-    public required string Label { get; init; }
+    public required string DnsLabel { get; init; }
 
     public required string Hostname { get; init; }
 
-    /// <summary>Comma-separated, as stored. Empty when the branch declares none.</summary>
+    /// <summary>
+    /// Names that redirect to <see cref="Hostname"/>, read back from
+    /// deployment_names as one comma-separated value.
+    /// </summary>
     public string Aliases { get; init; } = "";
 
     public required int HostPort { get; init; }

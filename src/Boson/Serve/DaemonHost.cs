@@ -77,8 +77,9 @@ public sealed class DaemonHost(BosonPaths paths, int port)
         var github = new GithubClient();
         var minter = new InstallationTokenMinter(projects, github);
         var caddy = new CaddySynchroniser(new CaddyConfigBuilder(), new CaddyAdminClient(), deployments, platform);
+        var imageRetainer = new ImageRetainer(docker);
         var deployer = new Deployer(
-            projects, deployments, deploys, minter, git, docker, caddy, locks, paths, log);
+            projects, deployments, deploys, minter, git, docker, imageRetainer, caddy, locks, paths, log);
         var orchestrator = new ManifestFlowOrchestrator(
             projects, deployments, platform, caddy, git, minter, github, dns, paths, TimeProvider.System, log);
         var reaper = new ExpiryReaper(deployments, deploys, deployer, TimeProvider.System, log);
@@ -345,7 +346,7 @@ public sealed class DaemonHost(BosonPaths paths, int port)
             foreach (var deployment in deployments.ListActiveForRepo(repo))
             {
                 var down = await docker.ComposeDownAsync(
-                    RepoName.ComposeProjectName(repo, deployment.Label));
+                    RepoName.ComposeProjectName(repo, deployment.DnsLabel));
 
                 if (!down.Ok)
                     log.LogWarning("{Repo}#{Branch}: compose down exited {Code}: {Err}",

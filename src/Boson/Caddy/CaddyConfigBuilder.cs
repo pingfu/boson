@@ -6,10 +6,10 @@ namespace Boson.Caddy;
 
 /// <summary>
 /// Synthesises the whole structured-JSON config from DB state.
-/// Route order: control /_boson/* → daemon, then per project its www redirect,
-/// its reserved webhook path and its proxy route, then the control catch-all
-/// 404. The control hostname can be private, because GitHub never reaches it;
-/// each project's own public hostname carries that project's webhook.
+/// Route order: control /_boson/* to daemon, then each deployment's alias
+/// redirects, reserved webhook path and proxy route, then the control
+/// catch-all 404. The control hostname can be private, because GitHub never
+/// reaches it; a deployment's public hostname carries the repository webhook.
 /// </summary>
 public sealed class CaddyConfigBuilder
 {

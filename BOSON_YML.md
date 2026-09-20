@@ -36,12 +36,12 @@ Each entry answers one question: this branch, on this hostname. An entry naming 
 | `branch` | yes | A branch name, or a glob (`*`, `feature/*`) |
 | `hostname` | yes | The name this deployment serves. Supports `{branch}` |
 | `aliases` | no | Names that 308 to `hostname` |
-| `env` | no | Environment set to run with, default `default` |
+| `env` | no | Environment set to run with |
 | `expire_after` | no | Idle time after which the deployment is stopped |
 
 Entries are matched top to bottom and the first match wins, so `main` listed above `"*"` gets its own hostname rather than a generated one. Reordering the file is how matching changes.
 
-`{branch}` in a hostname is the branch name as a DNS label: lowercased, anything outside `a-z0-9-` replaced with `-`, leading and trailing `-` trimmed, truncated to 63 characters. `feature/add-search` becomes `feature-add-search`.
+`{branch}` in a hostname is the branch name as a DNS label: lowercased, anything outside `a-z0-9-` replaced with `-`, leading and trailing `-` trimmed, and a short hash added when the branch name is changed. `feature/add-search` becomes `feature-add-search-<hash>`.
 
 ## Hostnames
 
@@ -49,7 +49,7 @@ boson issues certificates and routes traffic for every declared name, the same w
 
 A hostname another active deployment already serves is a conflict: the deploy fails before it builds and `boson status` reports it.
 
-Listing an alias replaces the automatic `www` redirect, which applies only when an entry declares no aliases.
+`www` is an alias like any other. Add it under `aliases` when the deployment should redirect it.
 
 ## Environment sets
 
@@ -119,6 +119,8 @@ The file is read after fetch and before build, alongside the check on what compo
 A push to a branch no entry matches deploys nothing, which is not an error: a repository decides which of its branches are deployed.
 
 A repository with no `_boson.yml` has nothing to deploy, and says so before it builds.
+
+`boson deploy <repo> --branch <name>` redeploys an existing deployment. Pattern deployments are created by pushes, because the push supplies the branch that matched the pattern.
 
 ## Undecided
 

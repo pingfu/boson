@@ -52,7 +52,7 @@ public static class StatusCommand
 
         foreach (var d in deployments.ListActive())
         {
-            var ps = await docker.ComposePsAsync(RepoName.ComposeProjectName(d.Repo, d.Label), ct);
+            var ps = await docker.ComposePsAsync(RepoName.ComposeProjectName(d.Repo, d.DnsLabel), ct);
             var containers = ps.Ok ? SummariseComposePs(ps.StdOut) : "unavailable";
             var last = deploys.GetLatestForDeployment(d.Id);
 

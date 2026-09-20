@@ -4,14 +4,15 @@ using System.Text;
 namespace Boson.Deploy;
 
 /// <summary>
-/// Turns a branch name into the label used for its hostname and its checkout
-/// directory. Git allows nearly anything in a ref, including uppercase,
-/// unicode and `/`, while a DNS label allows `a-z0-9-` and 63 characters, so
-/// the mapping is lossy and two branches can arrive at one label. The database
-/// holds the real branch name, so this never has to be reversed, only be
-/// unique and stable.
+/// Turns a branch name into the DNS label its hostname is built from, which
+/// its checkout directory and compose project are then named after so a
+/// listing and a URL say the same thing. Git allows nearly anything in a ref,
+/// including uppercase, unicode and `/`, while a DNS label allows `a-z0-9-`
+/// and 63 characters, so the mapping is lossy and two branches can arrive at
+/// one label. The database holds the real branch name, so this never has to be
+/// reversed, only be unique and stable.
 /// </summary>
-public static class BranchLabel
+public static class DnsLabel
 {
     public const int MaxLength = 63;
 

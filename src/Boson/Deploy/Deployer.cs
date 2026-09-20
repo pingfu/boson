@@ -50,6 +50,7 @@ public sealed class Deployer(
     IInstallationTokenMinter minter,
     IGitCli git,
     IDockerCli docker,
+    IImageRetainer imageRetainer,
     ICaddySynchroniser caddy,
     DeploymentLocks locks,
     BosonPaths paths,
@@ -218,7 +219,7 @@ public sealed class Deployer(
     private async Task<Preparation> PrepareAsync(string repo, string branch, CancellationToken ct)
     {
         var existing = deployments.GetByBranch(repo, branch);
-        var label = existing?.Label ?? BranchLabel.From(branch);
+        var label = existing?.DnsLabel ?? DnsLabel.From(branch);
         var checkoutDir = paths.CheckoutDir(repo, label);
         var log = new List<string>();
 
@@ -267,7 +268,7 @@ public sealed class Deployer(
                 ProjectId = projects.GetByRepo(repo)!.Id,
                 Repo = repo,
                 Branch = branch,
-                Label = label,
+                DnsLabel = label,
                 Hostname = hostname,
                 Aliases = aliases,
                 HostPort = HostPortAllocator.Allocate(
@@ -352,7 +353,7 @@ public sealed class Deployer(
 
             Log($"HEAD {ready.Sha}");
 
-            var composeName = RepoName.ComposeProjectName(deployment.Repo, deployment.Label);
+            var composeName = RepoName.ComposeProjectName(deployment.Repo, deployment.DnsLabel);
 
             var envSet = deployment.EnvSet ?? BosonPaths.DefaultEnvSet;
             var envFile = paths.EnvFile(deployment.Repo, envSet);
@@ -387,7 +388,7 @@ public sealed class Deployer(
             if (!succeeded) error = $"docker compose up exited {result.ExitCode}";
 
             if (succeeded)
-                await PruneImagesAsync(config.StdOut, ready.Sha, ready.File.Images.Keep, Log, ct);
+                await imageRetainer.PruneAsync(config.StdOut, ready.Sha, ready.File.Images.Keep, Log, ct);
         }
         catch (Exception e)
         {
@@ -402,57 +403,21 @@ public sealed class Deployer(
         return succeeded;
     }
 
-    /// <summary>
-    /// Keeps the last few builds of each image this deployment produces, so a
-    /// previous commit stays deployable without a rebuild and disk use stops
-    /// growing with every push. Failures here are reported, never fatal: the
-    /// new containers are already running.
-    /// </summary>
-    private async Task PruneImagesAsync(
-        string composeConfigJson, string tag, int keep, Action<string> log, CancellationToken ct)
-    {
-        foreach (var image in ComposeImages.Read(composeConfigJson))
-        {
-            if (image.Tag != tag)
-            {
-                // Silence here would look like retention working: an image that
-                // overwrites one tag every build leaves the last one untagged
-                // on disk, and nothing removes those.
-                log($"image retention: {image.Service} builds {image.Reference}, " +
-                    $"so nothing is retained; tag it :${ComposeVariables.CommitVariable} to keep the last {keep}");
-                continue;
-            }
-
-            var tags = await docker.ImageTagsAsync(image.Name, ct);
-
-            if (!tags.Ok)
-            {
-                log($"image retention: docker images {image.Name}: {tags.StdErr.Trim()}");
-                continue;
-            }
-
-            var listed = tags.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-            foreach (var stale in ComposeImages.Stale(listed, tag, keep))
-            {
-                var removed = await docker.ImageRemoveAsync($"{image.Name}:{stale}", ct);
-
-                log(removed.Ok
-                    ? $"removed {image.Name}:{stale}"
-                    : $"image retention: {image.Name}:{stale}: {removed.StdErr.Trim()}");
-            }
-        }
-    }
-
     public async Task TearDownAsync(Deployment deployment, CancellationToken ct = default)
     {
         var key = LockKey(deployment.Repo, deployment.Branch);
 
-        locks.TryEnter(key);
+        if (!locks.TryEnter(key))
+        {
+            logger.LogInformation(
+                "{Repo}#{Branch}: teardown skipped because a deploy is in flight",
+                deployment.Repo, deployment.Branch);
+            return;
+        }
 
         try
         {
-            var composeName = RepoName.ComposeProjectName(deployment.Repo, deployment.Label);
+            var composeName = RepoName.ComposeProjectName(deployment.Repo, deployment.DnsLabel);
 
             await docker.ComposeDownAsync(composeName, ct);
 
