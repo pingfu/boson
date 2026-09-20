@@ -8,33 +8,34 @@ Per project it takes two inputs: the repo and a public hostname.
 
 ![Your CI pipeline stays; boson absorbs the image registry, deploy step, reverse proxy and TLS renewal that would otherwise sit between a merge and a live container.](assets/boson-architecture-light.svg)
 
-Boson is for the small-server deployment shape where you want a GitHub push to update a private Docker Compose app, but you do not want GitHub Actions to SSH into production, do not want to maintain runner IP allowlists, do not want to run a registry, and do not want a self-hosted CI runner sitting on the box.
+Boson is for the small-server deployment shape where you want a GitHub push to update a private Docker Compose app, but you do not want GitHub Actions to SSH into production, do not want to maintain GitHub-hosted runner IP allowlists, do not want to run a registry, and do not want a self-hosted CI runner sitting on the box.
 
-| ❌ Admin work | Common single-server deploy choice that brings it back |
-|---|---|
-| ❌ Open an SSH path from GitHub-hosted runners to production | GitHub Actions over SSH |
-| ❌ Store an SSH private key in GitHub Secrets | GitHub Actions over SSH |
-| ❌ Deal with broad or changing GitHub-hosted runner IP ranges | GitHub Actions over SSH |
-| ❌ Build images in CI and operate registry credentials | GitHub Actions plus a private registry |
-| ❌ Store registry pull credentials on the server | GitHub Actions plus a private registry |
-| ❌ Run a CI executor on or near production | Self-hosted GitHub Actions runner |
-| ❌ Maintain HMAC verification, locking, logging, retry behavior, TLS, reverse proxy config and deploy scripts | Hand-rolled webhook receiver |
-| ❌ Operate more control-plane software than a single Compose app usually needs | Larger app platform |
-
-Boson keeps the deploy path server-side and webhook-driven instead:
+Boson keeps the deploy path server-side and webhook-driven:
 
 ```text
 GitHub push webhook -> boson -> git fetch/reset -> docker compose up -d --build
 ```
 
-| ✅ With boson | ❌ Without boson |
-|---|---|
-| ✅ Point DNS at the server | ❌ Allowlist GitHub Actions runner IPs |
-| ✅ Open ports 80 and 443 | ❌ Open SSH to GitHub-hosted runners |
-| ✅ Install Docker, git and the boson binary | ❌ Put SSH private keys in GitHub Secrets |
-| ✅ Complete a GitHub App setup flow | ❌ Run a Docker registry for deploys |
-| ✅ Keep app secrets in server-side env files | ❌ Store registry pull credentials on the server |
-| ✅ Let the production host build from the repo checkout | ❌ Run a self-hosted CI runner on production |
+1. **Point DNS at the server**, instead of allowlisting GitHub Actions runner IPs.
+2. **Open ports 80 and 443**, instead of opening SSH to GitHub-hosted runners.
+3. **Install Docker, git and the boson binary**, instead of putting SSH private keys in GitHub Secrets.
+4. **Complete a GitHub App setup flow**, instead of running a Docker registry for deploys.
+5. **Keep app secrets in server-side env files**, instead of storing registry pull credentials on the server.
+6. **Let the production host build from the repo checkout**, instead of running a self-hosted CI runner on production.
+
+General challenges boson is avoiding:
+
+| Alternative | Pros | Cons |
+|---|---|---|
+| GitHub Actions + SSH | Common; simple; logs in GitHub; flexible | ❌ Requires SSH path from GitHub to prod; ❌ GitHub does not recommend using standard hosted-runner IP ranges as internal allowlists; ❌ secrets in GitHub; deploy depends on remote shell script |
+| GitHub Actions + private registry | Prod pulls exact CI-built image; easier rollback by tag; build logs in GitHub | ❌ Registry credentials; ❌ image/tag management; ❌ extra service dependency; private pulls still need server-side auth and a trigger to restart |
+| GitHub Actions + message bus + Watchtower | No inbound SSH from GitHub; CI can publish a small deploy notification; the server reacts from inside the private network | ❌ Still needs a private registry and pull credentials; ❌ adds a message bus, subscriber and custom glue script; deploy logic is split across CI, queue and server |
+| Self-hosted Actions runner | No inbound SSH from GitHub; uses GitHub Actions workflow model; can access private network | ❌ CI executor near/on prod; workflow security matters a lot; runner maintenance |
+| Dokku | Mature single-server PaaS; git-push deploys; routing/certs/plugins included | ❌ Opinionated; more platform than plain Compose; app must fit Dokku model |
+| CapRover | Friendly UI; handles apps/routes/certs; good for multiple small services | ❌ Heavier than boson; more platform state; less transparent Git flow |
+| Coolify | Feature-rich; Git integrations; UI; manages services/databases | ❌ Heavy for one small app: the Market Canary migration measured Coolify at ~25% steady CPU on a 1-vCPU droplet while the app itself used ~0.4%; more moving parts |
+| Kamal | Image-based deploys over SSH; good rollback/deploy discipline; increasingly common | ❌ SSH orchestration; usually wants a registry; more config than boson |
+| Hand-rolled webhook | No SSH from GitHub; no registry; maximum control | ❌ You own HMAC verification, locking, logs, retries, TLS, idempotency and failure handling |
 
 ## Install
 
