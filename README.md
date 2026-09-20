@@ -27,9 +27,9 @@ General challenges boson is avoiding:
 
 | Alternative | Cons |
 |---|---|
-| GitHub Actions + SSH | ❌ Requires SSH from GitHub-hosted runners into production<br>❌ GitHub-hosted runner IP ranges are broad and not recommended as internal allowlists<br>❌ Puts deploy credentials in GitHub Actions secrets<br>❌ Leaves the real deploy behavior in a remote shell script |
-| GitHub Actions + private registry | ❌ Requires registry credentials in CI<br>❌ Requires pull credentials on the server for private images<br>❌ Adds image tagging, retention and rollback conventions<br>❌ Needs a second mechanism to tell the server to pull and restart |
-| GitHub Actions + message bus + Watchtower | ❌ Requires a private registry and pull credentials<br>❌ Adds a message bus or queue<br>❌ Adds a long-running subscriber or polling process on the server<br>❌ Splits deploy behavior across CI, queue, subscriber, Watchtower and Docker |
+| GitHub Actions +<br>SSH | ❌ Requires SSH from GitHub-hosted runners into production<br>❌ GitHub-hosted runner IP ranges are broad and not recommended as internal allowlists<br>❌ Puts deploy credentials in GitHub Actions secrets<br>❌ Leaves the real deploy behavior in a remote shell script |
+| GitHub Actions +<br>private registry | ❌ Requires registry credentials in CI<br>❌ Requires pull credentials on the server for private images<br>❌ Adds image tagging, retention and rollback conventions<br>❌ Needs a second mechanism to tell the server to pull and restart |
+| GitHub Actions +<br>message bus +<br>Watchtower | ❌ Requires a private registry and pull credentials<br>❌ Adds a message bus or queue<br>❌ Adds a long-running subscriber or polling process on the server<br>❌ Splits deploy behavior across CI, queue, subscriber, Watchtower and Docker |
 | Self-hosted Actions runner | ❌ Runs a CI executor on or near production<br>❌ Self-hosted runners are not guaranteed to be clean between jobs<br>❌ Workflow security becomes production security<br>❌ Adds runner patching, isolation and lifecycle work |
 | Dokku | ❌ Introduces a PaaS app model rather than plain Compose<br>❌ App layout and deploy behavior need to fit Dokku conventions<br>❌ More platform than a single Compose app needs |
 | CapRover | ❌ Adds dashboard-managed platform state<br>❌ Git flow is less transparent than a server-side repo checkout<br>❌ More moving parts than a small webhook deployer |
