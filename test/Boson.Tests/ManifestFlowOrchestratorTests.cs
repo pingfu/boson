@@ -203,6 +203,25 @@ public sealed class ManifestFlowOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task A_file_of_only_patterns_leaves_the_webhook_where_it_is_and_says_so()
+    {
+        // No deployment exists to carry the address, and the ones that will
+        // exist are made by pushes GitHub cannot deliver until it moves.
+        WriteBosonFile("""
+            version: 1
+            deployments:
+              - branch: "feature/*"
+                hostname: "{branch}.preview.example.com"
+            """);
+
+        var token = await RunToInstalledAsync();
+
+        Assert.Null(_github.WebhookUrlSet);
+        Assert.Contains(_orchestrator.GetStatus(token)!.Warnings,
+            w => w.Contains("webhook address is still deploy.example.com"));
+    }
+
+    [Fact]
     public async Task A_pattern_entry_makes_no_deployment_until_a_branch_matches_it()
     {
         WriteBosonFile("""

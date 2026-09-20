@@ -49,7 +49,7 @@ CREATE TABLE deployments (
   dns_label      TEXT NOT NULL,   -- branch reduced to a DNS label: the checkout
                                   -- directory and the compose project are named
                                   -- after it, so both match the hostname on sight
-  hostname       TEXT NOT NULL,
+  hostname       TEXT NOT NULL COLLATE NOCASE,
   host_port      INTEGER NOT NULL CHECK (host_port BETWEEN 1 AND 65535),
 
   env_set        TEXT,            -- null when the branch names none
@@ -78,12 +78,14 @@ CREATE UNIQUE INDEX uniq_deployment_port ON deployments(host_port)          WHER
 -- hostname or another alias.
 CREATE TABLE deployment_names (
   deployment_id INTEGER NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
-  name          TEXT NOT NULL,
-  kind          TEXT NOT NULL CHECK (kind IN ('primary', 'alias')),
-  PRIMARY KEY (deployment_id, name)
+  -- NOCASE because DNS is: Example.org and example.org are one name, and
+  -- storing both would put two Caddy routes on it with the first winning.
+  name          TEXT NOT NULL COLLATE NOCASE,
+  kind          TEXT NOT NULL CHECK (kind IN ('primary', 'alias'))
 );
 
 CREATE UNIQUE INDEX uniq_deployment_name ON deployment_names(name);
+CREATE INDEX idx_deployment_names_deployment ON deployment_names(deployment_id);
 
 CREATE TABLE deploys (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,

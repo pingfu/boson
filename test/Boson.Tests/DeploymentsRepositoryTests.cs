@@ -146,6 +146,20 @@ public class DeploymentsRepositoryTests
     }
 
     [Fact]
+    public void A_name_differing_only_in_case_is_the_same_name()
+    {
+        using var db = new TempDb();
+        var projects = new ProjectsRepository(db.Db);
+        var deployments = new DeploymentsRepository(db.Db);
+
+        TestProjects.Insert(projects, deployments, aliases: "www.site.example.com");
+
+        Assert.Throws<ProjectCollisionException>(() =>
+            TestProjects.Insert(projects, deployments,
+                branch: "develop", hostname: "WWW.Site.Example.COM", port: 30001));
+    }
+
+    [Fact]
     public void Flags_flip_and_only_on_active_rows()
     {
         using var db = new TempDb();

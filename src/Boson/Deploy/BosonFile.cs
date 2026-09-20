@@ -80,6 +80,14 @@ public sealed class BosonFile
             if (string.IsNullOrWhiteSpace(entry.Hostname))
                 return $"{FileName}: deployment for {entry.Branch} has no hostname";
 
+            // Hostnames are case-insensitive, and what is stored here becomes a
+            // row in deployment_names, a Caddy matcher and a certificate
+            // subject. Normalising once, here, is what keeps Example.org and
+            // example.org from being two of anything.
+            entry.Branch = entry.Branch.Trim();
+            entry.Hostname = entry.Hostname.Trim().ToLowerInvariant();
+            entry.Aliases = [.. entry.Aliases.Select(a => a.Trim().ToLowerInvariant())];
+
             // A pattern entry produces one deployment per branch it matches, so
             // its hostname has to vary with the branch or they collide the
             // moment a second branch matches.

@@ -244,7 +244,22 @@ public sealed class ManifestFlowOrchestrator(
             var primary = deployments.GetByBranch(entry.Repo, defaultBranch)
                           ?? deployments.ListActiveForRepo(entry.Repo).FirstOrDefault();
 
-            if (primary is not null)
+            if (primary is null)
+            {
+                // Every entry is a pattern, so no deployment exists to carry the
+                // address, and the ones that will exist are created by pushes
+                // that GitHub cannot deliver until it moves. Nothing later fixes
+                // this on its own.
+                entry.Warnings.Add(
+                    $"{BosonFile.FileName} names no branch outright, so the App's webhook address " +
+                    $"is still {platform.Get(PlatformRepository.AdminHostname)}, which GitHub may not " +
+                    "reach. Declare a branch and re-run boson add, or set the address by hand");
+
+                logger.LogWarning(
+                    "{Repo}: no deployment to carry the webhook address; it stays on the control plane",
+                    entry.Repo);
+            }
+            else
             {
                 try
                 {

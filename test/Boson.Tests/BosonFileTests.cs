@@ -61,6 +61,38 @@ public class BosonFileTests
     }
 
     [Fact]
+    public void Hostnames_are_lowercased_because_dns_is_case_insensitive()
+    {
+        // What the file says becomes a row, a Caddy matcher and a certificate
+        // subject, and DNS considers these one name.
+        var file = BosonFile.Parse("""
+            version: 1
+            deployments:
+              - branch: main
+                hostname: Example.ORG
+                aliases: [WWW.Example.org]
+            """, out _)!;
+
+        Assert.Equal("example.org", file.Deployments[0].Hostname);
+        Assert.Equal(["www.example.org"], file.Deployments[0].Aliases);
+    }
+
+    [Fact]
+    public void A_name_claimed_twice_in_different_case_is_still_claimed_twice()
+    {
+        Assert.Null(BosonFile.Parse("""
+            version: 1
+            deployments:
+              - branch: main
+                hostname: example.org
+              - branch: develop
+                hostname: EXAMPLE.ORG
+            """, out var problem));
+
+        Assert.Contains("claimed by both", problem);
+    }
+
+    [Fact]
     public void A_branch_no_entry_matches_has_no_deployment()
     {
         Assert.Null(BosonFile.Parse(Valid, out _)!.Match("develop"));
