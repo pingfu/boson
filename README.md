@@ -25,17 +25,17 @@ GitHub push webhook -> boson -> git fetch/reset -> docker compose up -d --build
 
 General challenges boson is avoiding:
 
-| Alternative | Pros | Cons |
-|---|---|---|
-| GitHub Actions + SSH | Common; simple; logs in GitHub; flexible | ❌ Requires SSH path from GitHub to prod<br>❌ GitHub does not recommend using standard hosted-runner IP ranges as internal allowlists<br>❌ Secrets in GitHub<br>❌ Deploy depends on remote shell script |
-| GitHub Actions + private registry | Prod pulls exact CI-built image; easier rollback by tag; build logs in GitHub | ❌ Registry credentials<br>❌ Image/tag management<br>❌ Extra service dependency<br>❌ Private pulls still need server-side auth and a trigger to restart |
-| GitHub Actions + message bus + Watchtower | No inbound SSH from GitHub; CI can publish a small deploy notification; the server reacts from inside the private network | ❌ Still needs a private registry and pull credentials<br>❌ Adds a message bus, subscriber and custom glue script<br>❌ Deploy logic is split across CI, queue and server |
-| Self-hosted Actions runner | No inbound SSH from GitHub; uses GitHub Actions workflow model; can access private network | ❌ CI executor near/on prod<br>❌ Workflow security matters a lot<br>❌ Runner maintenance |
-| Dokku | Mature single-server PaaS; git-push deploys; routing/certs/plugins included | ❌ Opinionated<br>❌ More platform than plain Compose<br>❌ App must fit Dokku model |
-| CapRover | Friendly UI; handles apps/routes/certs; good for multiple small services | ❌ Heavier than boson<br>❌ More platform state<br>❌ Less transparent Git flow |
-| Coolify | Feature-rich; Git integrations; UI; manages services/databases | ❌ CPU and resource heavy orchestration app<br>❌ More moving parts |
-| Kamal | Image-based deploys over SSH; good rollback/deploy discipline; increasingly common | ❌ SSH orchestration<br>❌ Usually wants a registry<br>❌ More config than boson |
-| Hand-rolled webhook | No SSH from GitHub; no registry; maximum control | ❌ You own HMAC verification, locking, logs, retries, TLS, idempotency and failure handling |
+| Alternative | Cons |
+|---|---|
+| GitHub Actions + SSH | ❌ Requires SSH from GitHub-hosted runners into production<br>❌ GitHub-hosted runner IP ranges are broad and not recommended as internal allowlists<br>❌ Puts deploy credentials in GitHub Actions secrets<br>❌ Leaves the real deploy behavior in a remote shell script |
+| GitHub Actions + private registry | ❌ Requires registry credentials in CI<br>❌ Requires pull credentials on the server for private images<br>❌ Adds image tagging, retention and rollback conventions<br>❌ Needs a second mechanism to tell the server to pull and restart |
+| GitHub Actions + message bus + Watchtower | ❌ Requires a private registry and pull credentials<br>❌ Adds a message bus or queue<br>❌ Adds a long-running subscriber or polling process on the server<br>❌ Splits deploy behavior across CI, queue, subscriber, Watchtower and Docker |
+| Self-hosted Actions runner | ❌ Runs a CI executor on or near production<br>❌ Self-hosted runners are not guaranteed to be clean between jobs<br>❌ Workflow security becomes production security<br>❌ Adds runner patching, isolation and lifecycle work |
+| Dokku | ❌ Introduces a PaaS app model rather than plain Compose<br>❌ App layout and deploy behavior need to fit Dokku conventions<br>❌ More platform than a single Compose app needs |
+| CapRover | ❌ Adds dashboard-managed platform state<br>❌ Git flow is less transparent than a server-side repo checkout<br>❌ More moving parts than a small webhook deployer |
+| Coolify | ❌ Heavy for one small app: the Market Canary migration measured Coolify at ~25% steady CPU on a 1-vCPU droplet while the app itself used ~0.4%<br>❌ More services to operate than the app needs<br>❌ More platform state to debug when deploys fail |
+| Kamal | ❌ Uses SSH orchestration to reach hosts<br>❌ Registry login and image distribution are part of the normal path<br>❌ More config than a single-server Compose checkout |
+| Hand-rolled webhook | ❌ You own HMAC verification<br>❌ You own deploy locking and idempotency<br>❌ You own logs, retries, TLS, reverse proxy config and failure handling |
 
 ## Install
 
