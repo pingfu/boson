@@ -7,10 +7,8 @@ public interface IProjectsRepository
 {
     Project? GetByRepo(string repo);
     IReadOnlyList<Project> ListActive();
-    /// <summary>Complete row only; throws on repo/hostname/port collision.</summary>
-    void Insert(Project p);
-    void MarkWebhookActive(string repo);
-    void SetDeployPending(string repo, bool value);
+    /// <summary>Complete row only; throws when the repo is already added.</summary>
+    long Insert(Project p);
     void Archive(string repo);
     void Purge(string repo);
 }
@@ -20,18 +18,13 @@ public sealed class ProjectsRepository(Db db) : IProjectsRepository
     private const string Columns = """
         id AS Id,
         repo AS Repo,
-        hostname AS Hostname,
-        upstream_port AS UpstreamPort,
-        branch AS Branch, 
-        github_app_id AS GithubAppId, 
+        github_app_id AS GithubAppId,
         github_app_slug AS GithubAppSlug,
         github_installation_id AS GithubInstallationId,
-        github_webhook_secret AS GithubWebhookSecret, 
+        github_webhook_secret AS GithubWebhookSecret,
         github_app_pem AS GithubAppPem,
-        webhook_active AS WebhookActive, 
-        deploy_pending AS DeployPending,
-        created_at AS CreatedAt, 
-        updated_at AS UpdatedAt, 
+        created_at AS CreatedAt,
+        updated_at AS UpdatedAt,
         archived_at AS ArchivedAt
         """;
 
@@ -51,42 +44,25 @@ public sealed class ProjectsRepository(Db db) : IProjectsRepository
             .ToList();
     }
 
-    public void Insert(Project p)
+    public long Insert(Project p)
     {
         using var conn = db.Open();
         try
         {
-            conn.Execute("""
+            return conn.ExecuteScalar<long>("""
                 INSERT INTO projects
-                  (repo, hostname, upstream_port, branch,
-                   github_app_id, github_app_slug, github_installation_id,
+                  (repo, github_app_id, github_app_slug, github_installation_id,
                    github_webhook_secret, github_app_pem)
                 VALUES
-                  (@Repo, @Hostname, @UpstreamPort, @Branch,
-                   @GithubAppId, @GithubAppSlug, @GithubInstallationId,
-                   @GithubWebhookSecret, @GithubAppPem)
+                  (@Repo, @GithubAppId, @GithubAppSlug, @GithubInstallationId,
+                   @GithubWebhookSecret, @GithubAppPem);
+                SELECT last_insert_rowid();
                 """, p);
         }
         catch (SqliteException e) when (e.SqliteErrorCode == 19) // SQLITE_CONSTRAINT
         {
-            throw new ProjectCollisionException(
-                "repo, hostname or host port is already claimed by an active project");
+            throw new ProjectCollisionException($"repo is already added: {p.Repo}");
         }
-    }
-
-    public void MarkWebhookActive(string repo) => SetFlag(repo, "webhook_active", true);
-
-    public void SetDeployPending(string repo, bool value) => SetFlag(repo, "deploy_pending", value);
-
-    private void SetFlag(string repo, string column, bool value)
-    {
-        using var conn = db.Open();
-        conn.Execute(
-            $"""
-            UPDATE projects SET {column} = @value, updated_at = datetime('now')
-            WHERE repo = @repo AND archived_at IS NULL
-            """,
-            new { repo, value = value ? 1 : 0 });
     }
 
     public void Archive(string repo)

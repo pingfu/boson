@@ -29,13 +29,13 @@ public static partial class RepoName
     ///
     /// Passing this explicitly on every invocation is load-bearing. Left to
     /// itself compose derives the project name from the compose file's
-    /// directory basename — the bare repo name — which two orgs' same-named
-    /// repos share, and colliding projects tear down each other's containers.
-    /// Deriving from org/name keeps them distinct.
+    /// directory basename, which two branches of one repository and two orgs'
+    /// same-named repositories both share, and colliding projects tear down
+    /// each other's containers. The branch label is in it for the same reason.
     /// </summary>
-    public static string ComposeProjectName(string repo)
+    public static string ComposeProjectName(string repo, string label)
     {
-        var chars = repo.ToLowerInvariant().Select(c =>
+        var chars = $"{repo}-{label}".ToLowerInvariant().Select(c =>
             c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '_' or '-' ? c : '-');
         return new string(chars.ToArray());
     }

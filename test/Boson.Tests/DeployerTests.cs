@@ -8,42 +8,53 @@ namespace Boson.Tests;
 
 public class DeployerTests : IDisposable
 {
-    private const string Repo = "acme/site";
+    private const string Repo = TestProjects.Repo;
+    private const string Branch = TestProjects.Branch;
 
     private readonly TempDb _db = new();
     private readonly TempDirs _dirs = new();
     private readonly ProjectsRepository _projects;
+    private readonly DeploymentsRepository _deployments;
     private readonly DeploysRepository _deploys;
-    private readonly ProjectLocks _locks = new();
+    private readonly DeploymentLocks _locks = new();
     private readonly FakeGitCli _git = new();
     private readonly FakeDockerCli _docker = new();
     private readonly FakeMinter _minter = new();
+    private readonly FakeCaddySynchroniser _caddy = new();
+    private readonly Deployment _deployment;
 
     public DeployerTests()
     {
         _projects = new ProjectsRepository(_db.Db);
+        _deployments = new DeploymentsRepository(_db.Db);
         _deploys = new DeploysRepository(_db.Db);
-        _projects.Insert(TestProjects.New());
+
+        _deployment = TestProjects.Insert(_projects, _deployments);
 
         WriteBosonFile($"""
             version: 1
             deployments:
-              - branch: main
-                hostname: {TestProjects.New().Hostname}
+              - branch: {Branch}
+                hostname: {TestProjects.Hostname}
             """);
     }
 
     /// <summary>A deploy reads the file the fetch left behind, so a checkout without one has nothing to deploy.</summary>
-    private void WriteBosonFile(string yaml)
+    private void WriteBosonFile(string yaml, string branch = Branch)
     {
-        var dir = _dirs.Paths.ProjectDir(Repo);
+        var dir = _dirs.Paths.CheckoutDir(Repo, BranchLabel.From(branch));
 
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, BosonFile.FileName), yaml);
     }
 
     private Deployer NewDeployer() => new(
-        _projects, _deploys, _minter, _git, _docker, _locks, _dirs.Paths, NullLogger.Instance);
+        _projects, _deployments, _deploys, _minter, _git, _docker, _caddy, _locks,
+        _dirs.Paths, NullLogger.Instance);
+
+    private Deployment Current() => _deployments.GetByBranch(Repo, Branch)!;
+
+    private IReadOnlyList<DeployRow> Rows() => _deploys.ListForDeployment(_deployment.Id);
 
     public void Dispose()
     {
@@ -54,30 +65,42 @@ public class DeployerTests : IDisposable
     [Fact]
     public async Task Unknown_project_returns_not_found()
     {
-        var result = await NewDeployer().DeployAsync("acme/nope", DeployTrigger.Manual);
+        var result = await NewDeployer().DeployAsync("acme/nope", Branch, DeployTrigger.Manual);
         Assert.IsType<DeployResult.NotFound>(result);
     }
 
     [Fact]
     public async Task Manual_deploy_on_held_lock_returns_lock_held_without_a_row()
     {
-        _locks.TryEnter(Repo);
-        var result = await NewDeployer().DeployAsync(Repo, DeployTrigger.Manual);
+        _locks.TryEnter(Deployer.LockKey(Repo, Branch));
+        var result = await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
 
         Assert.IsType<DeployResult.LockHeld>(result);
-        Assert.Empty(_deploys.ListForProject(_projects.GetByRepo(Repo)!.Id));
-        Assert.False(_projects.GetByRepo(Repo)!.DeployPending);
+        Assert.Empty(Rows());
+        Assert.False(Current().DeployPending);
+    }
+
+    [Fact]
+    public async Task A_lock_on_one_branch_does_not_hold_another()
+    {
+        // Two branches of a repository are separate containers on separate
+        // ports, with nothing to serialise between them.
+        _locks.TryEnter(Deployer.LockKey(Repo, "develop"));
+
+        var result = await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
+
+        Assert.IsType<DeployResult.Completed>(result);
     }
 
     [Fact]
     public async Task Webhook_deploy_on_held_lock_coalesces_into_deploy_pending()
     {
-        _locks.TryEnter(Repo);
-        var result = await NewDeployer().DeployAsync(Repo, DeployTrigger.Webhook);
+        _locks.TryEnter(Deployer.LockKey(Repo, Branch));
+        var result = await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Webhook);
 
         Assert.IsType<DeployResult.Coalesced>(result);
-        Assert.True(_projects.GetByRepo(Repo)!.DeployPending);
-        Assert.Empty(_deploys.ListForProject(_projects.GetByRepo(Repo)!.Id));
+        Assert.True(Current().DeployPending);
+        Assert.Empty(Rows());
     }
 
     [Fact]
@@ -85,7 +108,7 @@ public class DeployerTests : IDisposable
     {
         long? startedId = null;
         var result = await NewDeployer().DeployAsync(
-            Repo, DeployTrigger.Manual, id => startedId = id);
+            Repo, Branch, DeployTrigger.Manual, id => startedId = id);
 
         var completed = Assert.IsType<DeployResult.Completed>(result);
         Assert.True(completed.Succeeded);
@@ -98,35 +121,47 @@ public class DeployerTests : IDisposable
         Assert.NotNull(row.CommitSha);
         Assert.NotNull(row.FinishedAt);
         Assert.True(File.Exists(row.LogPath));
-        Assert.True(_projects.GetByRepo(Repo)!.WebhookActive);
-        Assert.False(_locks.IsHeld(Repo));
+        Assert.True(Current().WebhookActive);
+        Assert.False(_locks.IsHeld(Deployer.LockKey(Repo, Branch)));
     }
 
     [Fact]
-    public async Task Failed_compose_leaves_project_inactive_with_error_recorded()
+    public async Task The_commit_is_the_image_tag_compose_builds_with()
+    {
+        var result = await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
+
+        var completed = Assert.IsType<DeployResult.Completed>(result);
+        var sha = _deploys.Get(completed.LastDeployId)!.CommitSha;
+
+        Assert.Equal(sha, _docker.VariablesPassed[^1].Commit);
+    }
+
+    [Fact]
+    public async Task Failed_compose_leaves_the_deployment_inactive_with_error_recorded()
     {
         _docker.UpExitCode = 1;
-        var result = await NewDeployer().DeployAsync(Repo, DeployTrigger.Manual);
+        var result = await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
 
         var completed = Assert.IsType<DeployResult.Completed>(result);
         Assert.False(completed.Succeeded);
         var row = _deploys.Get(completed.LastDeployId)!;
         Assert.Equal(DeployStatus.Failed, row.Status);
         Assert.Contains("docker compose up exited 1", row.Error);
-        Assert.False(_projects.GetByRepo(Repo)!.WebhookActive);
+        Assert.False(Current().WebhookActive);
     }
 
     [Fact]
     public async Task A_checkout_with_no_boson_file_has_nothing_to_deploy()
     {
-        File.Delete(Path.Combine(_dirs.Paths.ProjectDir(Repo), BosonFile.FileName));
+        File.Delete(Path.Combine(
+            _dirs.Paths.CheckoutDir(Repo, BranchLabel.From(Branch)), BosonFile.FileName));
 
         Assert.Contains($"no {BosonFile.FileName}", await FailureAsync());
         Assert.Equal(0, _docker.UpCalls);
     }
 
     [Fact]
-    public async Task A_file_with_no_entry_for_the_branch_deploys_nothing()
+    public async Task A_file_that_no_longer_declares_the_branch_stops_the_deploy()
     {
         WriteBosonFile("""
             version: 1
@@ -135,24 +170,69 @@ public class DeployerTests : IDisposable
                 hostname: other.example.com
             """);
 
-        Assert.Contains("declares no deployment for main", await FailureAsync());
+        Assert.Contains($"no longer declares {Branch}", await FailureAsync());
         Assert.Equal(0, _docker.UpCalls);
     }
 
     [Fact]
-    public async Task A_file_claiming_a_different_hostname_stops_the_deploy()
+    public async Task A_branch_nothing_declares_is_not_deployed_and_leaves_no_checkout()
     {
-        // The file is the authority, and moving a hostname means routing, a
-        // certificate and the webhook address all moving with it.
         WriteBosonFile("""
             version: 1
             deployments:
               - branch: main
-                hostname: elsewhere.example.com
+                hostname: site.example.com
+            """, branch: "scratch");
+
+        var result = await NewDeployer().DeployAsync(Repo, "scratch", DeployTrigger.Webhook);
+
+        Assert.IsType<DeployResult.NotDeclared>(result);
+        Assert.False(Directory.Exists(_dirs.Paths.CheckoutDir(Repo, BranchLabel.From("scratch"))));
+    }
+
+    [Fact]
+    public async Task A_matched_branch_gets_its_own_deployment_on_first_push()
+    {
+        WriteBosonFile("""
+            version: 1
+            deployments:
+              - branch: main
+                hostname: site.example.com
+              - branch: "feature/*"
+                hostname: "{branch}.preview.example.com"
+                expire_after: 7d
+            """, branch: "feature/search");
+
+        var result = await NewDeployer().DeployAsync(Repo, "feature/search", DeployTrigger.Webhook);
+
+        Assert.IsType<DeployResult.Completed>(result);
+
+        var created = _deployments.GetByBranch(Repo, "feature/search")!;
+
+        Assert.Equal($"{BranchLabel.From("feature/search")}.preview.example.com", created.Hostname);
+        Assert.Equal("7d", created.ExpireAfter);
+        Assert.NotEqual(_deployment.HostPort, created.HostPort);
+        Assert.True(_caddy.SyncCalls > 0);
+    }
+
+    [Fact]
+    public async Task A_changed_hostname_moves_the_deployment_and_the_routing()
+    {
+        // The file is the authority: a rename is applied, not reported.
+        WriteBosonFile($"""
+            version: 1
+            deployments:
+              - branch: {Branch}
+                hostname: renamed.example.com
+                aliases: [www.renamed.example.com]
             """);
 
-        Assert.Contains("elsewhere.example.com", await FailureAsync());
-        Assert.Equal(0, _docker.UpCalls);
+        var result = await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
+
+        Assert.IsType<DeployResult.Completed>(result);
+        Assert.Equal("renamed.example.com", Current().Hostname);
+        Assert.Equal(["www.renamed.example.com"], Current().AliasList);
+        Assert.True(_caddy.SyncCalls > 0);
     }
 
     [Fact]
@@ -161,8 +241,8 @@ public class DeployerTests : IDisposable
         WriteBosonFile($"""
             version: 1
             deployments:
-              - branch: main
-                hostname: {TestProjects.New().Hostname}
+              - branch: {Branch}
+                hostname: {TestProjects.Hostname}
                 env: production
             """);
 
@@ -183,19 +263,53 @@ public class DeployerTests : IDisposable
         WriteBosonFile($"""
             version: 1
             deployments:
-              - branch: main
-                hostname: {TestProjects.New().Hostname}
+              - branch: {Branch}
+                hostname: {TestProjects.Hostname}
                 env: production
             """);
 
-        await NewDeployer().DeployAsync(Repo, DeployTrigger.Manual);
+        await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
 
-        Assert.Equal(envFile, _docker.VariablesPassed.Single().EnvFilePath);
+        Assert.Equal(envFile, _docker.VariablesPassed[^1].EnvFilePath);
+    }
+
+    [Fact]
+    public async Task Retention_keeps_the_newest_images_and_removes_the_rest()
+    {
+        var sha = await DeployAndGetShaAsync();
+
+        // keep: 3 counts the one just built, so old1 and old2 stay and old3 goes.
+        Assert.Equal(["acme/site-web:old3"], _docker.ImagesRemoved);
+        Assert.DoesNotContain($"acme/site-web:{sha}", _docker.ImagesRemoved);
+    }
+
+    [Fact]
+    public async Task Retention_leaves_images_this_deploy_did_not_tag()
+    {
+        _docker.ConfigStdOut = _ =>
+            """
+            {"services":{"web":{"build":{},"image":"someone/else:v1","ports":[
+              {"host_ip":"127.0.0.1","target":3000,"published":"30000"}]}}}
+            """;
+
+        await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
+
+        Assert.Empty(_docker.ImagesRemoved);
+    }
+
+    private async Task<string> DeployAndGetShaAsync()
+    {
+        _docker.ImageTags["acme/site-web"] = [_git.NextSha, "old1", "old2", "old3"];
+
+        var result = await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
+        var completed = Assert.IsType<DeployResult.Completed>(result);
+
+        return _deploys.Get(completed.LastDeployId)!.CommitSha!;
     }
 
     private async Task<string> FailureAsync()
     {
-        var result = await NewDeployer().DeployAsync(Repo, DeployTrigger.Manual);
+        var result = await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
         var completed = Assert.IsType<DeployResult.Completed>(result);
 
         Assert.False(completed.Succeeded);
@@ -207,11 +321,11 @@ public class DeployerTests : IDisposable
     public async Task Token_mint_failure_is_recorded_with_its_prefix()
     {
         _minter.Fail = true;
-        var result = await NewDeployer().DeployAsync(Repo, DeployTrigger.Manual);
+        var result = await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
 
         var completed = Assert.IsType<DeployResult.Completed>(result);
         Assert.False(completed.Succeeded);
-        Assert.StartsWith("token mint:", _deploys.Get(completed.LastDeployId)!.Error);
+        Assert.Contains("fetch:", _deploys.Get(completed.LastDeployId)!.Error);
     }
 
     [Fact]
@@ -220,19 +334,20 @@ public class DeployerTests : IDisposable
         // A push lands during pass 1 only.
         _git.OnFetch = call =>
         {
-            if (call == 1) _projects.SetDeployPending(Repo, true);
+            if (call == 1) _deployments.SetDeployPending(_deployment.Id, true);
             return Task.CompletedTask;
         };
 
-        var result = await NewDeployer().DeployAsync(Repo, DeployTrigger.Manual);
+        var result = await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
 
         var completed = Assert.IsType<DeployResult.Completed>(result);
         Assert.Equal(2, completed.Passes);
-        var rows = _deploys.ListForProject(_projects.GetByRepo(Repo)!.Id);
+
+        var rows = Rows();
         Assert.Equal(2, rows.Count);
         Assert.Equal(DeployTrigger.Manual, rows[0].Trigger);
         Assert.Equal(DeployTrigger.Webhook, rows[1].Trigger);
-        Assert.False(_projects.GetByRepo(Repo)!.DeployPending);
+        Assert.False(Current().DeployPending);
     }
 
     [Fact]
@@ -241,18 +356,17 @@ public class DeployerTests : IDisposable
         // Every pass sees a fresh push.
         _git.OnFetch = _ =>
         {
-            _projects.SetDeployPending(Repo, true);
+            _deployments.SetDeployPending(_deployment.Id, true);
             return Task.CompletedTask;
         };
 
-        var result = await NewDeployer().DeployAsync(Repo, DeployTrigger.Manual);
+        var result = await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
 
         var completed = Assert.IsType<DeployResult.Completed>(result);
         Assert.Equal(Deployer.MaxPasses, completed.Passes);
-        Assert.Equal(Deployer.MaxPasses,
-            _deploys.ListForProject(_projects.GetByRepo(Repo)!.Id).Count);
-        Assert.True(_projects.GetByRepo(Repo)!.DeployPending);
-        Assert.False(_locks.IsHeld(Repo));
+        Assert.Equal(Deployer.MaxPasses, Rows().Count);
+        Assert.True(Current().DeployPending);
+        Assert.False(_locks.IsHeld(Deployer.LockKey(Repo, Branch)));
     }
 
     [Fact]
@@ -262,23 +376,36 @@ public class DeployerTests : IDisposable
         _docker.UpExitCode = 1;
         _git.OnFetch = call =>
         {
-            if (call == 1) _projects.SetDeployPending(Repo, true);
+            if (call == 1) _deployments.SetDeployPending(_deployment.Id, true);
             return Task.CompletedTask;
         };
 
-        var result = await NewDeployer().DeployAsync(Repo, DeployTrigger.Manual);
+        var result = await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
 
         var completed = Assert.IsType<DeployResult.Completed>(result);
         Assert.Equal(2, completed.Passes);
-        Assert.False(_projects.GetByRepo(Repo)!.DeployPending);
+        Assert.False(Current().DeployPending);
     }
 
     [Fact]
-    public async Task Deploy_on_inactive_project_runs_normally()
+    public async Task Deploy_on_an_inactive_deployment_runs_normally()
     {
         // Activation filtering guards only the webhook entry path.
-        Assert.False(_projects.GetByRepo(Repo)!.WebhookActive);
-        var result = await NewDeployer().DeployAsync(Repo, DeployTrigger.Webhook);
+        Assert.False(Current().WebhookActive);
+        var result = await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Webhook);
         Assert.IsType<DeployResult.Completed>(result);
+    }
+
+    [Fact]
+    public async Task Tearing_down_stops_the_containers_and_frees_the_name()
+    {
+        await NewDeployer().TearDownAsync(_deployment);
+
+        Assert.Contains("acme-site-main", _docker.DownedProjects);
+        Assert.Null(_deployments.GetByBranch(Repo, Branch));
+        Assert.True(_caddy.SyncCalls > 0);
+
+        // The checkout stays, so a push brings the deployment back.
+        Assert.True(Directory.Exists(_dirs.Paths.CheckoutDir(Repo, _deployment.Label)));
     }
 }

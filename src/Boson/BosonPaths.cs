@@ -34,12 +34,20 @@ public sealed class BosonPaths
             ?? "/srv";
     }
 
+    /// <summary>
+    /// Holds a checkout per branch rather than being one, so a repository can
+    /// deploy several branches at once.
+    /// </summary>
     public string ProjectDir(string repo)
     {
         var (org, name) = RepoName.Split(repo);
 
         return Path.Combine(SrvDir, org, name);
     }
+
+    /// <summary>One branch's working tree, named by its label so it matches the hostname.</summary>
+    public string CheckoutDir(string repo, string label) =>
+        Path.Combine(ProjectDir(repo), label);
 
     /// <summary>
     /// A project's environment sets, kept here rather than in the checkout:

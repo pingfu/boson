@@ -192,9 +192,9 @@ public static class InitCommand
             return ExitCodes.RuntimeFailure;
         }
 
-        var projectsRepo = new ProjectsRepository(db);
-        
-        using (var cfg = new CaddyConfigBuilder().Build(projectsRepo.ListActive(), adminHostname))
+        var deploymentsRepo = new DeploymentsRepository(db);
+
+        using (var cfg = new CaddyConfigBuilder().Build(deploymentsRepo.ListActive(), adminHostname))
             await caddyClient.LoadConfigAsync(cfg, ct);
         
         await DbOwnership.ChownToBosonAsync(runner, paths.DbPath);

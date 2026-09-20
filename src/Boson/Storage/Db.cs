@@ -6,7 +6,11 @@ namespace Boson.Storage;
 /// Connection factory. Every connection gets WAL, foreign keys and the busy
 /// timeout; the daemon and CLI processes write concurrently.
 /// </summary>
-public sealed class Db(string dbPath)
+/// <param name="pooled">
+/// False keeps the file closable the moment the last connection is disposed,
+/// which is what a test needs to delete its database.
+/// </param>
+public sealed class Db(string dbPath, bool pooled = true)
 {
     public string DbPath { get; } = dbPath;
 
@@ -16,6 +20,7 @@ public sealed class Db(string dbPath)
         {
             DataSource = DbPath,
             Mode = SqliteOpenMode.ReadWriteCreate,
+            Pooling = pooled,
         }.ToString());
 
         conn.Open();

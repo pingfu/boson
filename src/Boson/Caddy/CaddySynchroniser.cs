@@ -17,7 +17,7 @@ public interface ICaddySynchroniser
 public sealed class CaddySynchroniser(
     CaddyConfigBuilder builder,
     ICaddyAdminClient client,
-    IProjectsRepository projects,
+    IDeploymentsRepository deployments,
     IPlatformRepository platform) : ICaddySynchroniser
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -30,7 +30,7 @@ public sealed class CaddySynchroniser(
         {
             var admin = platform.Get(PlatformRepository.AdminHostname)
                 ?? throw new InvalidOperationException("control hostname not set; run boson init");
-            using var cfg = builder.Build(projects.ListActive(), admin);
+            using var cfg = builder.Build(deployments.ListActive(), admin);
 
             await client.LoadConfigAsync(cfg, ct);
         }

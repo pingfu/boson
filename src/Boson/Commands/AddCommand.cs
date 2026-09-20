@@ -11,33 +11,17 @@ public static class AddCommand
     {
         var repoArg = new Argument<string>("org/name") { Description = "GitHub repository" };
 
-        var hostnameOpt = new Option<string>("--hostname")
-        {
-            Description = "Public hostname Caddy fronts for this project",
-            Required = true,
-        };
-
-        var branchOpt = new Option<string>("--branch")
-        {
-            Description = "Branch to deploy",
-            DefaultValueFactory = _ => "main",
-        };
-
-        var cmd = new Command("add", "Register a project: GitHub App manifest flow, Caddy route, initial fetch");
+        // Nothing else to pass: hostnames, branches and environment sets are in
+        // the repository's own `_boson.yml`, which this command clones to read.
+        var cmd = new Command("add", "Register a project: GitHub App manifest flow, clone, deployments from _boson.yml");
 
         cmd.Arguments.Add(repoArg);
-        cmd.Options.Add(hostnameOpt);
-        cmd.Options.Add(branchOpt);
-        cmd.SetAction((parseResult, ct) => RunAsync(
-            parseResult.GetValue(repoArg)!,
-            parseResult.GetValue(hostnameOpt)!,
-            parseResult.GetValue(branchOpt)!,
-            ct));
+        cmd.SetAction((parseResult, ct) => RunAsync(parseResult.GetValue(repoArg)!, ct));
 
         return cmd;
     }
 
-    public static async Task<int> RunAsync(string repoInput, string hostname, string branch, CancellationToken ct)
+    public static async Task<int> RunAsync(string repoInput, CancellationToken ct)
     {
         if (!RepoName.TryCanonicalise(repoInput, out var repo))
         {
@@ -53,7 +37,7 @@ public static class AddCommand
         
         try
         {
-            start = await rpc.AddAsync(new AddRequest(repo, hostname, branch), ct);
+            start = await rpc.AddAsync(new AddRequest(repo), ct);
         }
         catch (DaemonUnreachableException e)
         {
@@ -126,11 +110,11 @@ public static class AddCommand
             switch (phase)
             {
                 case "done":
-                    PrintNextSteps(paths, repo, fetchFailed: false, status.Body.Error);
+                    PrintNextSteps(paths, repo, fetchFailed: false, status.Body.Error, status.Body.Warnings, status.Body.EnvSets);
                     return ExitCodes.Success;
                 case "fetch_failed":
                     // Row persisted; the failure is printed and `boson deploy` retries.
-                    PrintNextSteps(paths, repo, fetchFailed: true, status.Body.Error);
+                    PrintNextSteps(paths, repo, fetchFailed: true, status.Body.Error, status.Body.Warnings, status.Body.EnvSets);
                     return ExitCodes.Success;
                 case "failed":
                     Console.Error.WriteLine($"add failed: {status.Body.Error}");
@@ -142,53 +126,45 @@ public static class AddCommand
         }
     }
 
-    private static void PrintNextSteps(BosonPaths paths, string repo, bool fetchFailed, string? error)
+    private static void PrintNextSteps(
+        BosonPaths paths, string repo, bool fetchFailed, string? error,
+        string[] warnings, string[] envSets)
     {
         Console.WriteLine();
         Console.WriteLine($"✓ {repo} added");
 
+        // The App and its keys are saved either way: GitHub issues them once,
+        // and everything reported here is fixed by a push or a retry.
         if (fetchFailed)
-            Console.WriteLine($"⚠ initial fetch failed: {error} — boson deploy retries it");
-        
+            Console.WriteLine($"⚠ {error}");
+
+        foreach (var warning in warnings)
+            Console.WriteLine($"⚠ {warning}");
+
         Console.WriteLine();
         Console.WriteLine("Next steps:");
-        PrintEnvStep(paths, repo, fetchFailed);
+        PrintEnvStep(paths, repo, envSets, fetchFailed);
         Console.WriteLine($"  2. boson deploy {repo}");
-        Console.WriteLine("The first successful deploy activates push-to-deploy.");
+        Console.WriteLine("The first successful deploy of a branch activates push-to-deploy for it.");
     }
 
     /// <summary>
-    /// Names the environment sets the fetched repository actually asks for, so
+    /// Names the environment sets the cloned repository actually asks for, so
     /// the admin creates the files this project needs rather than guessing from
-    /// a generic instruction.
+    /// a generic instruction. The daemon read them out of `_boson.yml`.
     /// </summary>
-    private static void PrintEnvStep(BosonPaths paths, string repo, bool fetchFailed)
+    private static void PrintEnvStep(BosonPaths paths, string repo, string[] envSets, bool unread)
     {
         var envDir = paths.EnvDir(repo);
 
-        if (fetchFailed)
+        if (unread)
         {
-            Console.WriteLine($"  1. If the project's compose needs env, create {envDir}/default");
+            Console.WriteLine($"  1. Fix the above, push, then create whatever environment sets");
+            Console.WriteLine($"     {BosonFile.FileName} names, under {envDir}/");
             return;
         }
 
-        var declared = BosonFile.Find(paths.ProjectDir(repo), out var problem);
-
-        if (declared is null)
-        {
-            Console.WriteLine($"  1. Fix {problem ?? $"the missing {BosonFile.FileName} at the repository root"}");
-            Console.WriteLine("     Deploys fail until it reads.");
-            return;
-        }
-
-        var sets = declared.Deployments
-            .Select(d => d.Env)
-            .Where(set => set is not null)
-            .Distinct()
-            .Order()
-            .ToList();
-
-        if (sets.Count == 0)
+        if (envSets.Length == 0)
         {
             Console.WriteLine($"  1. {BosonFile.FileName} names no environment set, so nothing to create");
             return;
@@ -196,8 +172,8 @@ public static class AddCommand
 
         Console.WriteLine($"  1. Create the environment sets {BosonFile.FileName} names:");
 
-        foreach (var set in sets)
-            Console.WriteLine($"     {Path.Combine(envDir, set!)}");
+        foreach (var set in envSets)
+            Console.WriteLine($"     {Path.Combine(envDir, set)}");
 
         Console.WriteLine("     (copy the repo's template; compose reads them as $BOSON_ENV_FILE).");
     }

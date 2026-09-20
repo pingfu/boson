@@ -24,6 +24,11 @@ public interface IDockerCli
     Task<ProcessResult> ComposeDownStdinAsync(string yaml, CancellationToken ct = default);
 
     Task<ProcessResult> VolumeRemoveAsync(string volume, CancellationToken ct = default);
+
+    /// <summary>Tags of one image name, newest build first, as `docker images` orders them.</summary>
+    Task<ProcessResult> ImageTagsAsync(string imageName, CancellationToken ct = default);
+
+    Task<ProcessResult> ImageRemoveAsync(string reference, CancellationToken ct = default);
 }
 
 public sealed class DockerCli(IProcessRunner runner) : IDockerCli
@@ -54,6 +59,12 @@ public sealed class DockerCli(IProcessRunner runner) : IDockerCli
             workingDirectory,
             environment: variables.ToEnvironment(),
             ct: ct);
+
+    public Task<ProcessResult> ImageTagsAsync(string imageName, CancellationToken ct = default) =>
+        runner.RunAsync("docker", ["images", imageName, "--format", "{{.Tag}}"], ct: ct);
+
+    public Task<ProcessResult> ImageRemoveAsync(string reference, CancellationToken ct = default) =>
+        runner.RunAsync("docker", ["image", "rm", reference], ct: ct);
 
     public Task<ProcessResult> ComposeDownAsync(string projectName, CancellationToken ct = default) =>
         runner.RunAsync("docker", ["compose", "--project-name", projectName, "down"], ct: ct);

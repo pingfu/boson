@@ -10,6 +10,12 @@ public sealed record InstallationToken(string Value, DateTimeOffset ExpiresAt);
 public interface IInstallationTokenMinter
 {
     Task<InstallationToken> MintAsync(string repo, CancellationToken ct = default);
+
+    /// <summary>
+    /// An App-authenticated JWT, for the few calls GitHub accepts from the App
+    /// itself rather than from an installation.
+    /// </summary>
+    string JwtFor(long appId, string pem);
 }
 
 /// <summary>
@@ -27,10 +33,16 @@ public sealed class InstallationTokenMinter(
         var project = projects.GetByRepo(repo)
             ?? throw new InvalidOperationException($"unknown project: {repo}");
 
-        string jwt;
+        var jwt = JwtFor(project.GithubAppId, project.GithubAppPem);
+
+        return await github.CreateInstallationTokenAsync(jwt, project.GithubInstallationId, ct);
+    }
+
+    public string JwtFor(long appId, string pem)
+    {
         using (var rsa = RSA.Create())
         {
-            rsa.ImportFromPem(project.GithubAppPem);
+            rsa.ImportFromPem(pem);
             var now = DateTimeOffset.UtcNow;
 
             // CryptoProviderFactory.Default caches SignatureProviders keyed on the
@@ -51,11 +63,10 @@ public sealed class InstallationTokenMinter(
                 // iat backdated 60s for clock skew; exp inside GitHub's 10-minute cap.
                 { "iat", now.ToUnixTimeSeconds() - 60 },
                 { "exp", now.ToUnixTimeSeconds() + 540 },
-                { "iss", project.GithubAppId.ToString() },
+                { "iss", appId.ToString() },
             };
-            jwt = new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(header, payload));
-        }
 
-        return await github.CreateInstallationTokenAsync(jwt, project.GithubInstallationId, ct);
+            return new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(header, payload));
+        }
     }
 }

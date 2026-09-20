@@ -1,6 +1,6 @@
 # `_boson.yml`
 
-Design for the file a repository uses to tell boson what to deploy. Not built yet.
+The file a repository uses to tell boson what to deploy.
 
 `_boson.yml` sits at the repository root and is read on every deploy, from the branch being deployed. It declares branches, the hostnames they serve, and which environment set they run with. It never contains secrets.
 
@@ -65,7 +65,7 @@ Listing an alias replaces the automatic `www` redirect, which applies only when 
   feature-add-search/          <- checkout, created when that branch was pushed
 ```
 
-A project added before this change keeps its checkout at `/srv/<org>/<name>` and its `.env` inside it, so migrating means moving the tree down into `<branch>/` and the `.env` out into `env/`.
+A checkout directory is named by the branch's label, the same reduction that produces a `{branch}` hostname, so a directory listing and a URL name the same thing.
 
 boson passes the chosen set's path to compose as `BOSON_ENV_FILE`, and the compose file consumes it:
 
@@ -73,10 +73,13 @@ boson passes the chosen set's path to compose as `BOSON_ENV_FILE`, and the compo
 services:
   web:
     build: .
+    image: my-app:${BOSON_COMMIT}
     ports:
       - "127.0.0.1:${BOSON_HOST_PORT}:8080"
     env_file: ${BOSON_ENV_FILE}
 ```
+
+Three variables reach every `docker compose` boson runs: `BOSON_HOST_PORT`, the port it allocated; `BOSON_ENV_FILE`, the path to the environment set this branch named; and `BOSON_COMMIT`, the commit the deploy just fetched.
 
 Secrets stay out of the working tree, so a re-clone, a `git reset --hard`, a branch teardown or a purge cannot reach them, and a repository that commits its `.env` cannot overwrite them.
 
@@ -86,15 +89,17 @@ Pattern entries name a different set from production, or they hand every branch 
 
 ## Images
 
-`images.keep` is how many tagged images to retain per deployment. Each build is tagged with the commit it came from, so retention keeps the last few commits deployable without a rebuild, and anything older is removed after a successful deploy.
+`images.keep` is how many builds of each image to retain, counting the one just built. Tagging with `${BOSON_COMMIT}` is what makes retention possible: each build gets a name of its own instead of overwriting `latest`, so the last few commits stay deployable without a rebuild and everything older is removed after a successful deploy.
+
+Retention only touches images a deploy tagged with the commit it built. A service running an image someone else published is left alone.
 
 ## Lifecycle
 
 A push deploys the branch it names, if an entry matches it.
 
-Deleting a branch tears down what it was serving: containers stopped, route removed, host port released, checkout deleted.
+`expire_after` measures from the last successful deploy, so an active branch never expires, and a branch whose recent deploys all failed is not kept alive by them. The daemon sweeps every fifteen minutes. On expiry the containers stop and the hostname and port are released, while the checkout stays: a later push redeploys the branch rather than starting from nothing.
 
-`expire_after` measures from the last successful deploy, so an active branch never expires. On expiry the deployment is stopped and its port released, and the record stays visible in `boson status` with the reason. A later push redeploys it.
+An expired deployment leaves `boson status`, since it holds nothing any more. What stopped it is in `journalctl -u boson`.
 
 ## Project-level settings
 
@@ -119,6 +124,6 @@ A repository with no `_boson.yml` has nothing to deploy, and says so before it b
 
 **A ceiling on matched branches.** `expire_after` bounds how long a deployment lives, not how many exist. Fifteen branches pushed in a day is fifteen container stacks, each building an image, on one host. Either a project-wide cap that refuses past its limit, or an admission that the host's memory is the limit.
 
-**Deployments removed from the file.** Deleting an entry could tear its deployment down on the next deploy of any branch, which is consistent and also means a bad merge takes production off the internet. Leaving it running until `boson remove` is safer and leaves the file disagreeing with reality.
+**Deployments removed from the file.** Today an entry that disappears stops that branch's next deploy with the reason, and leaves its containers running until `boson remove`. Tearing it down automatically is more consistent, and also means a bad merge takes production off the internet.
 
 **A compose file per deployment.** A staging branch may want a different compose file from production. One field, `compose:`, and a default of `docker-compose.yml`.

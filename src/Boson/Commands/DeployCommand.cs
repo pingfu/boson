@@ -11,15 +11,23 @@ public static class DeployCommand
     public static Command Create()
     {
         var repoArg = new Argument<string>("org/name") { Description = "Project to deploy" };
+
+        var branchOpt = new Option<string?>("--branch")
+        {
+            Description = "One branch to deploy (default: every branch this project deploys)",
+        };
+
         var cmd = new Command("deploy", "Deploy the branch tip now (the daemon executes; this command streams the log)");
-        
+
         cmd.Arguments.Add(repoArg);
-        cmd.SetAction((parseResult, ct) => RunAsync(parseResult.GetValue(repoArg)!, ct));
-        
+        cmd.Options.Add(branchOpt);
+        cmd.SetAction((parseResult, ct) =>
+            RunAsync(parseResult.GetValue(repoArg)!, parseResult.GetValue(branchOpt), ct));
+
         return cmd;
     }
 
-    public static async Task<int> RunAsync(string repoInput, CancellationToken ct)
+    public static async Task<int> RunAsync(string repoInput, string? branch, CancellationToken ct)
     {
         if (!RepoName.TryCanonicalise(repoInput, out var repo))
         {
@@ -40,7 +48,7 @@ public static class DeployCommand
         
         try
         {
-            start = await rpc.DeployAsync(repo, ct);
+            start = await rpc.DeployAsync(repo, branch, ct);
         }
         catch (DaemonUnreachableException e)
         {

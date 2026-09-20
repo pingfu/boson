@@ -32,7 +32,8 @@ public static class WebhookEndpoint
     public static void Map(
         IEndpointRouteBuilder app,
         IProjectsRepository projects,
-        ProjectLocks locks,
+        IDeploymentsRepository deployments,
+        DeploymentLocks locks,
         IDeployer deployer,
         ILogger logger)
     {
@@ -75,46 +76,54 @@ public static class WebhookEndpoint
             if (ctx.Request.Headers["X-GitHub-Event"].ToString() == "ping")
             {
                 Log(logger, repo, 200, "ping");
-                return Results.Json(new { status = "pong" });
+                return Ack("pong");
             }
 
             // 5 — body parses as a push event with a ref. Parsed only after the
             // signature verified attacker-controllable input.
-            string? pushRef = null;
+            string? gitRef = null;
             try
             {
                 using var doc = JsonDocument.Parse(raw);
                 if (doc.RootElement.TryGetProperty("ref", out var refProp)
                     && refProp.ValueKind == JsonValueKind.String)
-                    pushRef = refProp.GetString();
+                    gitRef = refProp.GetString();
             }
             catch (JsonException)
             {
             }
-            if (pushRef is null)
+            if (gitRef is null)
             {
-                Log(logger, repo, 400, "not a push event with a ref");
+                Log(logger, repo, 400, "no ref in the payload");
                 return Results.BadRequest();
             }
 
-            // 6 — branch filter.
-            if (pushRef != $"refs/heads/{project.Branch}")
+            const string branchPrefix = "refs/heads/";
+
+            if (!gitRef.StartsWith(branchPrefix, StringComparison.Ordinal))
             {
-                Log(logger, repo, 200, $"ignored ref {pushRef}");
-                return Results.Json(new { status = "ignored" });
+                Log(logger, repo, 200, $"ignored ref {gitRef}");
+                return Ack("ignored");
             }
 
-            // 7 — activation filter.
-            if (!project.WebhookActive)
+            var branch = gitRef[branchPrefix.Length..];
+
+            // 6 — activation filter, per branch. A branch boson has not seen
+            // deploys on its first push: `_boson.yml` is what decides, and only
+            // the fetch can read it.
+            var deployment = deployments.GetByBranch(repo, branch);
+
+            if (deployment is { WebhookActive: false })
             {
-                if (locks.IsHeld(repo))
+                if (locks.IsHeld(Deployer.LockKey(repo, branch)))
                 {
-                    projects.SetDeployPending(repo, true);
-                    Log(logger, repo, 202, "inactive but first deploy in flight; coalesced");
-                    return Results.Json(new { status = "queued" }, statusCode: StatusCodes.Status202Accepted);
+                    deployments.SetDeployPending(deployment.Id, true);
+                    Log(logger, repo, 202, $"{branch} inactive but first deploy in flight; coalesced");
+                    return Ack("queued", StatusCodes.Status202Accepted);
                 }
-                Log(logger, repo, 200, "inactive");
-                return Results.Json(new { status = "inactive" });
+
+                Log(logger, repo, 200, $"{branch} inactive");
+                return Ack("inactive");
             }
 
             // All pass — 202, then the deploy on a background task.
@@ -122,17 +131,20 @@ public static class WebhookEndpoint
             {
                 try
                 {
-                    await deployer.DeployAsync(repo, DeployTrigger.Webhook);
+                    await deployer.DeployAsync(repo, branch, DeployTrigger.Webhook);
                 }
                 catch (Exception e)
                 {
-                    logger.LogError(e, "{Repo}: webhook deploy task crashed", repo);
+                    logger.LogError(e, "{Repo}#{Branch}: webhook deploy task crashed", repo, branch);
                 }
             });
-            Log(logger, repo, 202, "deploy queued");
-            return Results.Json(new { status = "queued" }, statusCode: StatusCodes.Status202Accepted);
+            Log(logger, repo, 202, $"deploy queued for {branch}");
+            return Ack("queued", StatusCodes.Status202Accepted);
         });
     }
+
+    private static IResult Ack(string status, int statusCode = StatusCodes.Status200OK) =>
+        Results.Json(new WebhookAck(status), RpcJson.Default.WebhookAck, statusCode: statusCode);
 
     private static bool SignatureValid(string header, byte[] body, string secret)
     {

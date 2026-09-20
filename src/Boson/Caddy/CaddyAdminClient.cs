@@ -33,7 +33,10 @@ public sealed class CaddyAdminClient : ICaddyAdminClient
 
     public async Task LoadConfigAsync(JsonDocument cfg, CancellationToken ct = default)
     {
-        var content = new StringContent(JsonSerializer.Serialize(cfg.RootElement), Encoding.UTF8, "application/json");
+        // GetRawText rather than serialising the element: the document is
+        // already JSON, and re-serialising it would reach for the reflection
+        // path the trimmer cannot follow.
+        var content = new StringContent(cfg.RootElement.GetRawText(), Encoding.UTF8, "application/json");
         
         var response = await _http.PostAsync($"{BaseUrl}/load", content, ct);
         

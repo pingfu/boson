@@ -12,9 +12,9 @@ public class CaddyConfigBuilderTests
 
     // The admin hostname is the control plane and may be private; nothing
     // GitHub reaches depends on it.
-    private JsonNode Build(params Storage.Project[] projects)
+    private JsonNode Build(params Storage.Deployment[] deployments)
     {
-        using var doc = _builder.Build(projects, "boson.enclave");
+        using var doc = _builder.Build(deployments, "boson.enclave");
         return JsonNode.Parse(doc.RootElement.GetRawText())!;
     }
 
@@ -89,12 +89,12 @@ public class CaddyConfigBuilderTests
     [Fact]
     public void One_project_gets_a_reverse_proxy_route_between_admin_and_404()
     {
-        var config = Build(TestProjects.New(repo: "acme/site", hostname: "site.example.com", port: 8080));
+        var config = Build(TestProjects.Deployment(repo: "acme/site", hostname: "site.example.com", port: 8080));
         var routes = Routes(config);
 
-        // admin, www redirect, project webhook, project proxy, 404
-        Assert.Equal(5, routes.Count);
-        var projectRoute = routes[3]!;
+        // admin, deployment webhook, deployment proxy, 404
+        Assert.Equal(4, routes.Count);
+        var projectRoute = routes[2]!;
         Assert.Equal("site.example.com", projectRoute["match"]![0]!["host"]![0]!.GetValue<string>());
         Assert.Equal("127.0.0.1:8080",
             projectRoute["handle"]![1]!["upstreams"]![0]!["dial"]!.GetValue<string>());
@@ -103,17 +103,17 @@ public class CaddyConfigBuilderTests
     [Fact]
     public void Project_webhook_path_routes_to_the_daemon_ahead_of_the_container()
     {
-        var config = Build(TestProjects.New(hostname: "example.org", port: 8080));
+        var config = Build(TestProjects.Deployment(hostname: "example.org", port: 8080));
         var routes = Routes(config);
 
-        var webhook = routes[2]!;
+        var webhook = routes[1]!;
         Assert.Equal("example.org", webhook["match"]![0]!["host"]![0]!.GetValue<string>());
         Assert.Equal("/_boson/webhook/*", webhook["match"]![0]!["path"]![0]!.GetValue<string>());
         Assert.Equal($"127.0.0.1:{CaddyConfigBuilder.DaemonPort}",
             webhook["handle"]![1]!["upstreams"]![0]!["dial"]!.GetValue<string>());
 
         // Ordering is load-bearing: the catch-all proxy would otherwise swallow it.
-        var proxy = routes[3]!;
+        var proxy = routes[2]!;
         Assert.Null(proxy["match"]![0]!["path"]);
         Assert.Equal("127.0.0.1:8080",
             proxy["handle"]![1]!["upstreams"]![0]!["dial"]!.GetValue<string>());
@@ -125,7 +125,7 @@ public class CaddyConfigBuilderTests
         // Verified against caddy:2-alpine: a private name is rejected by the CA
         // ("does not end with a valid public suffix") and the next issuer in the
         // list produces the certificate. Order is the whole mechanism.
-        var policy = Build(TestProjects.New())["apps"]!["tls"]!["automation"]!["policies"]![0]!;
+        var policy = Build(TestProjects.Deployment())["apps"]!["tls"]!["automation"]!["policies"]![0]!;
 
         Assert.Equal("boson.enclave", policy["subjects"]![0]!.GetValue<string>());
         Assert.Equal("acme", policy["issuers"]![0]!["module"]!.GetValue<string>());
@@ -137,7 +137,7 @@ public class CaddyConfigBuilderTests
     {
         // A public site must fail loudly rather than quietly serve an untrusted
         // certificate, so only the control hostname carries a policy.
-        var policies = Build(TestProjects.New(hostname: "example.org"))
+        var policies = Build(TestProjects.Deployment(hostname: "example.org"))
             ["apps"]!["tls"]!["automation"]!["policies"]!.AsArray();
 
         var subjects = policies.SelectMany(p => p!["subjects"]!.AsArray())
@@ -148,7 +148,7 @@ public class CaddyConfigBuilderTests
     [Fact]
     public void Every_proxy_route_compresses_before_proxying()
     {
-        var config = Build(TestProjects.New());
+        var config = Build(TestProjects.Deployment());
         foreach (var route in Routes(config))
         {
             var handlers = route!["handle"]!.AsArray();
@@ -159,9 +159,10 @@ public class CaddyConfigBuilderTests
     }
 
     [Fact]
-    public void Every_project_gets_a_www_308_route_before_its_proxy_route()
+    public void A_declared_alias_gets_a_308_route_before_the_proxy_route()
     {
-        var config = Build(TestProjects.New(hostname: "example.org", port: 8080));
+        var config = Build(TestProjects.Deployment(
+            hostname: "example.org", aliases: "www.example.org", port: 8080));
         var routes = Routes(config);
 
         Assert.Equal(5, routes.Count);
@@ -178,12 +179,27 @@ public class CaddyConfigBuilderTests
     }
 
     [Fact]
-    public void A_www_hostname_gets_no_redirect_of_its_own()
+    public void A_deployment_declaring_no_alias_gets_no_redirect()
     {
-        // www.www.example.com is never right.
-        var routes = Routes(Build(TestProjects.New(hostname: "www.example.com")));
+        // The `www` redirect every project used to get whether it wanted one or
+        // not now comes from the aliases the repository declares.
+        var routes = Routes(Build(TestProjects.Deployment(hostname: "example.org")));
+
         Assert.DoesNotContain(routes, r =>
             r!["handle"]![0]!["status_code"]?.GetValue<int>() == 308);
+    }
+
+    [Fact]
+    public void Several_aliases_all_redirect_to_the_one_hostname()
+    {
+        var routes = Routes(Build(TestProjects.Deployment(
+            hostname: "example.org", aliases: "www.example.org,example.com")));
+
+        var redirects = routes
+            .Where(r => r!["handle"]![0]!["status_code"]?.GetValue<int>() == 308)
+            .Select(r => r!["match"]![0]!["host"]![0]!.GetValue<string>());
+
+        Assert.Equal(["example.com", "www.example.org"], redirects);
     }
 
     [Fact]
@@ -199,24 +215,22 @@ public class CaddyConfigBuilderTests
     public void Many_projects_are_ordered_by_hostname_with_404_last()
     {
         var config = Build(
-            TestProjects.New(repo: "acme/zeta", hostname: "zeta.example.com", port: 8082),
-            TestProjects.New(repo: "acme/alpha", hostname: "alpha.example.com", port: 8081));
+            TestProjects.Deployment(repo: "acme/zeta", hostname: "zeta.example.com", port: 8082),
+            TestProjects.Deployment(repo: "acme/alpha", hostname: "alpha.example.com", port: 8081));
         var routes = Routes(config);
 
-        // admin, then each project's www redirect + webhook + proxy in hostname order, then 404
-        Assert.Equal(8, routes.Count);
-        Assert.Equal("www.alpha.example.com", routes[1]!["match"]![0]!["host"]![0]!.GetValue<string>());
-        Assert.Equal("alpha.example.com", routes[3]!["match"]![0]!["host"]![0]!.GetValue<string>());
-        Assert.Equal("www.zeta.example.com", routes[4]!["match"]![0]!["host"]![0]!.GetValue<string>());
-        Assert.Equal("zeta.example.com", routes[6]!["match"]![0]!["host"]![0]!.GetValue<string>());
-        Assert.Equal("static_response", routes[7]!["handle"]![0]!["handler"]!.GetValue<string>());
-        Assert.Equal(404, routes[7]!["handle"]![0]!["status_code"]!.GetValue<int>());
+        // admin, then each deployment's webhook + proxy in hostname order, then 404
+        Assert.Equal(6, routes.Count);
+        Assert.Equal("alpha.example.com", routes[2]!["match"]![0]!["host"]![0]!.GetValue<string>());
+        Assert.Equal("zeta.example.com", routes[4]!["match"]![0]!["host"]![0]!.GetValue<string>());
+        Assert.Equal("static_response", routes[5]!["handle"]![0]!["handler"]!.GetValue<string>());
+        Assert.Equal(404, routes[5]!["handle"]![0]!["status_code"]!.GetValue<int>());
     }
 
     [Fact]
     public void Admin_boson_route_always_comes_first()
     {
-        var config = Build(TestProjects.New(hostname: "aaa.example.com"));
+        var config = Build(TestProjects.Deployment(hostname: "aaa.example.com"));
         var first = Routes(config)[0]!;
         Assert.Equal("/_boson/*", first["match"]![0]!["path"]![0]!.GetValue<string>());
         Assert.Equal($"127.0.0.1:{CaddyConfigBuilder.DaemonPort}",
@@ -227,7 +241,7 @@ public class CaddyConfigBuilderTests
     public void Output_is_valid_json_document()
     {
         using var doc = _builder.Build(
-            [TestProjects.New()], "deploy.example.com");
+            [TestProjects.Deployment()], "deploy.example.com");
         Assert.Equal(JsonValueKind.Object, doc.RootElement.ValueKind);
     }
 }

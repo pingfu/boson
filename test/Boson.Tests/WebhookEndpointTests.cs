@@ -20,22 +20,26 @@ public sealed class WebhookEndpointTests : IAsyncLifetime
     private const string Url = "/_boson/webhook/acme/site";
 
     private readonly TempDb _db = new();
-    private readonly ProjectLocks _locks = new();
+    private readonly DeploymentLocks _locks = new();
     private readonly FakeDeployer _deployer = new();
     private ProjectsRepository _projects = null!;
+    private DeploymentsRepository _deployments = null!;
+    private Deployment _deployment = null!;
     private WebApplication _app = null!;
     private HttpClient _client = null!;
 
     public async Task InitializeAsync()
     {
         _projects = new ProjectsRepository(_db.Db);
+        _deployments = new DeploymentsRepository(_db.Db);
         _projects.Insert(TestProjects.New(repo: Repo, secret: Secret));
+        _deployment = TestProjects.Insert(_projects, _deployments, repo: Repo);
 
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.UseTestServer();
         _app = builder.Build();
-        WebhookEndpoint.Map(_app, _projects, _locks, _deployer, NullLogger.Instance);
+        WebhookEndpoint.Map(_app, _projects, _deployments, _locks, _deployer, NullLogger.Instance);
         await _app.StartAsync();
         _client = _app.GetTestClient();
     }
@@ -71,7 +75,9 @@ public sealed class WebhookEndpointTests : IAsyncLifetime
     private static string PushBody(string branch = "main") =>
         $$"""{"ref":"refs/heads/{{branch}}","after":"abc123"}""";
 
-    private void Activate() => _projects.MarkWebhookActive(Repo);
+    private void Activate() => _deployments.MarkWebhookActive(_deployment.Id);
+
+    private Deployment Current() => _deployments.GetByBranch(Repo, "main")!;
 
     [Fact]
     public async Task Oversized_body_is_413()
@@ -132,32 +138,45 @@ public sealed class WebhookEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Untracked_ref_is_200_ignored()
+    public async Task A_tag_or_other_non_branch_ref_is_200_ignored()
     {
         Activate();
-        var response = await PostAsync(Url, PushBody(branch: "feature/x"));
+        var response = await PostAsync(Url, """{"ref":"refs/tags/v1","after":"abc123"}""");
         Assert.Equal(200, (int)response.StatusCode);
         Assert.Contains("ignored", await response.Content.ReadAsStringAsync());
         Assert.Empty(_deployer.Calls);
     }
 
     [Fact]
-    public async Task Inactive_idle_project_is_200_inactive()
+    public async Task A_branch_with_no_deployment_reaches_the_deployer_to_be_discovered()
+    {
+        // Only `_boson.yml` can say whether a branch deploys, and only the
+        // fetch can read it, so this is not a decision the webhook can make.
+        var response = await PostAsync(Url, PushBody(branch: "feature/x"));
+
+        Assert.Equal(202, (int)response.StatusCode);
+
+        await _deployer.Invoked.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("feature/x", Assert.Single(_deployer.Calls).Branch);
+    }
+
+    [Fact]
+    public async Task Inactive_idle_deployment_is_200_inactive()
     {
         var response = await PostAsync(Url, PushBody());
         Assert.Equal(200, (int)response.StatusCode);
         Assert.Contains("inactive", await response.Content.ReadAsStringAsync());
         Assert.Empty(_deployer.Calls);
-        Assert.False(_projects.GetByRepo(Repo)!.DeployPending);
+        Assert.False(Current().DeployPending);
     }
 
     [Fact]
     public async Task Inactive_with_first_deploy_in_flight_is_202_and_sets_pending()
     {
-        _locks.TryEnter(Repo);
+        _locks.TryEnter(Deployer.LockKey(Repo, "main"));
         var response = await PostAsync(Url, PushBody());
         Assert.Equal(202, (int)response.StatusCode);
-        Assert.True(_projects.GetByRepo(Repo)!.DeployPending);
+        Assert.True(Current().DeployPending);
         Assert.Empty(_deployer.Calls);
     }
 
@@ -172,6 +191,8 @@ public sealed class WebhookEndpointTests : IAsyncLifetime
         await _deployer.Invoked.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var call = Assert.Single(_deployer.Calls);
         Assert.Equal(Repo, call.Repo);
+        Assert.Equal("main", call.Branch);
         Assert.Equal(DeployTrigger.Webhook, call.Trigger);
     }
+
 }

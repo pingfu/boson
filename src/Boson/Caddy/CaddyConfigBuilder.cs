@@ -18,51 +18,53 @@ public sealed class CaddyConfigBuilder
     /// <summary>The only path boson reserves on a project's hostname.</summary>
     public const string WebhookPathPrefix = "/_boson/webhook/";
 
-    public JsonDocument Build(IReadOnlyList<Project> projects, string adminHostname)
+    public JsonDocument Build(IReadOnlyList<Deployment> deployments, string adminHostname)
     {
-        var routes = new JsonArray
-        {
-            ProxyRoute(
-                match: new JsonObject
-                {
-                    ["host"] = new JsonArray(adminHostname),
-                    ["path"] = new JsonArray("/_boson/*"),
-                },
-                dial: $"127.0.0.1:{DaemonPort}"),
-        };
+        // Routes are added through Append rather than JsonArray's own Add: the
+        // generic overload that would otherwise win takes any object and
+        // serialises it by reflection, which the trimmer cannot follow.
+        var routes = new JsonArray();
+
+        Append(routes, ProxyRoute(
+            match: new JsonObject
+            {
+                ["host"] = new JsonArray(adminHostname),
+                ["path"] = new JsonArray("/_boson/*"),
+            },
+            dial: $"127.0.0.1:{DaemonPort}"));
 
         // Ordered so the same DB state always produces byte-identical config:
         // every change is a full replace, and a stable document is what makes
         // one diffable against what Caddy is actually running.
-        foreach (var p in projects.OrderBy(p => p.Hostname, StringComparer.Ordinal))
+        foreach (var d in deployments.OrderBy(d => d.Hostname, StringComparer.Ordinal))
         {
-            // The www alias only exists in Caddy's config, so the redirect has
-            // to live here: no project container can answer for a hostname
-            // Caddy holds no certificate for.
-            if (!p.Hostname.StartsWith("www.", StringComparison.Ordinal))
-                routes.Add(RedirectRoute($"www.{p.Hostname}", p.Hostname));
+            // An alias exists only in Caddy's config, so its redirect has to
+            // live here: no container can answer for a hostname Caddy holds no
+            // certificate for.
+            foreach (var alias in d.AliasList.OrderBy(a => a, StringComparer.Ordinal))
+                Append(routes, RedirectRoute(alias, d.Hostname));
 
-            // GitHub delivers to the project's own public hostname, so the
+            // GitHub delivers to the deployment's own public hostname, so the
             // control plane never has to be reachable from the internet. This
-            // route must precede the project's catch-all proxy route below.
-            routes.Add(ProxyRoute(
+            // route must precede the catch-all proxy route below.
+            Append(routes, ProxyRoute(
                 match: new JsonObject
                 {
-                    ["host"] = new JsonArray(p.Hostname),
+                    ["host"] = new JsonArray(d.Hostname),
                     ["path"] = new JsonArray($"{WebhookPathPrefix}*"),
                 },
                 dial: $"127.0.0.1:{DaemonPort}"));
 
-            routes.Add(ProxyRoute(
-                match: new JsonObject { ["host"] = new JsonArray(p.Hostname) },
-                dial: $"127.0.0.1:{p.UpstreamPort}"));
+            Append(routes, ProxyRoute(
+                match: new JsonObject { ["host"] = new JsonArray(d.Hostname) },
+                dial: $"127.0.0.1:{d.HostPort}"));
         }
 
         // Last, and only after every project route: the control hostname answers
         // /_boson/* and nothing else. Without this terminator a request to it
         // falls through to whatever Caddy matches next, which is a project's
         // catch-all proxy — the control plane would quietly serve someone's app.
-        routes.Add(new JsonObject
+        Append(routes, new JsonObject
         {
             ["match"] = new JsonArray(new JsonObject
             {
@@ -140,6 +142,8 @@ public sealed class CaddyConfigBuilder
 
         return JsonDocument.Parse(doc.ToJsonString());
     }
+
+    private static void Append(JsonArray routes, JsonNode route) => routes.Add(route);
 
     private static JsonObject ProxyRoute(JsonObject match, string dial) => new()
     {

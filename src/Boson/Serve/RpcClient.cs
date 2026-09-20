@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 
 namespace Boson.Serve;
 
@@ -16,7 +17,6 @@ public sealed record RpcResult<T>(HttpStatusCode Status, T? Body, string? Error)
 /// </summary>
 public sealed class RpcClient : IDisposable
 {
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly HttpClient _http;
 
     public RpcClient(string socketPath)
@@ -46,19 +46,28 @@ public sealed class RpcClient : IDisposable
     }
 
     public Task<RpcResult<AddStartResponse>> AddAsync(AddRequest request, CancellationToken ct = default) =>
-        SendAsync<AddStartResponse>(() => _http.PostAsJsonAsync("add", request, Json, ct), ct);
+        SendAsync(
+            () => _http.PostAsJsonAsync("add", request, RpcJson.Default.AddRequest, ct),
+            RpcJson.Default.AddStartResponse, ct);
 
     public Task<RpcResult<AddStatusResponse>> AddStatusAsync(string token, CancellationToken ct = default) =>
-        SendAsync<AddStatusResponse>(() => _http.GetAsync($"add/status/{token}", ct), ct);
+        SendAsync(() => _http.GetAsync($"add/status/{token}", ct), RpcJson.Default.AddStatusResponse, ct);
 
-    public Task<RpcResult<DeployStartResponse>> DeployAsync(string repo, CancellationToken ct = default) =>
-        SendAsync<DeployStartResponse>(() => _http.PostAsync($"deploy/{repo}", content: null, ct), ct);
+    public Task<RpcResult<DeployStartResponse>> DeployAsync(
+        string repo, string? branch = null, CancellationToken ct = default) =>
+        SendAsync(
+            () => _http.PostAsync(
+                branch is null ? $"deploy/{repo}" : $"deploy/{repo}?branch={Uri.EscapeDataString(branch)}",
+                content: null, ct),
+            RpcJson.Default.DeployStartResponse, ct);
 
     public Task<RpcResult<RemoveResponse>> RemoveAsync(string repo, bool purge, CancellationToken ct = default) =>
-        SendAsync<RemoveResponse>(() => _http.PostAsync($"remove/{repo}?purge={purge}", content: null, ct), ct);
+        SendAsync(
+            () => _http.PostAsync($"remove/{repo}?purge={purge}", content: null, ct),
+            RpcJson.Default.RemoveResponse, ct);
 
     private static async Task<RpcResult<T>> SendAsync<T>(
-        Func<Task<HttpResponseMessage>> send, CancellationToken ct)
+        Func<Task<HttpResponseMessage>> send, JsonTypeInfo<T> shape, CancellationToken ct)
     {
         HttpResponseMessage response;
         try
@@ -76,14 +85,14 @@ public sealed class RpcClient : IDisposable
         {
             var parsed = string.IsNullOrWhiteSpace(body)
                 ? default
-                : JsonSerializer.Deserialize<T>(body, Json);
+                : JsonSerializer.Deserialize(body, shape);
             return new RpcResult<T>(response.StatusCode, parsed, null);
         }
 
         string? error = null;
         try
         {
-            error = JsonSerializer.Deserialize<ErrorResponse>(body, Json)?.Error;
+            error = JsonSerializer.Deserialize(body, RpcJson.Default.ErrorResponse)?.Error;
         }
         catch (JsonException)
         {

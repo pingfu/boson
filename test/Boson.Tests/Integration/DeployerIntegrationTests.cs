@@ -23,7 +23,7 @@ public sealed class DeployerIntegrationTests : IDisposable
 
     public void Dispose()
     {
-        _docker.ComposeDownAsync(RepoName.ComposeProjectName(Repo)).GetAwaiter().GetResult();
+        _docker.ComposeDownAsync(RepoName.ComposeProjectName(Repo, "main")).GetAwaiter().GetResult();
         _db.Dispose();
         _dirs.Dispose();
     }
@@ -32,35 +32,45 @@ public sealed class DeployerIntegrationTests : IDisposable
     public async Task Deploy_builds_and_starts_the_project_and_activates_the_webhook()
     {
         var projects = new ProjectsRepository(_db.Db);
+        var deployments = new DeploymentsRepository(_db.Db);
         var deploys = new DeploysRepository(_db.Db);
-        projects.Insert(TestProjects.New(repo: Repo, hostname: "it.example.com", port: Port));
 
-        // The fake "fetch" materialises the compose file, standing in for git.
+        var deployment = TestProjects.Insert(projects, deployments,
+            repo: Repo, hostname: "it.example.com", port: Port);
+
+        // The fake "fetch" materialises the two files a real clone would have
+        // left behind, standing in for git.
         var git = new FakeGitCli
         {
             OnFetchDir = dir =>
             {
                 Directory.CreateDirectory(dir);
-                File.WriteAllText(Path.Combine(dir, "docker-compose.yml"), $"""
+                File.WriteAllText(Path.Combine(dir, BosonFile.FileName), """
+                    version: 1
+                    deployments:
+                      - branch: main
+                        hostname: it.example.com
+                    """);
+                File.WriteAllText(Path.Combine(dir, "docker-compose.yml"), """
                     services:
                       web:
                         image: nginx:alpine
                         ports:
-                          - "127.0.0.1:{Port}:80"
+                          - "127.0.0.1:${BOSON_HOST_PORT}:80"
                     """);
             },
         };
 
         var deployer = new Deployer(
-            projects, deploys, new FakeMinter(), git, _docker, new ProjectLocks(),
-            _dirs.Paths, NullLogger.Instance);
+            projects, deployments, deploys, new FakeMinter(), git, _docker,
+            new FakeCaddySynchroniser(), new DeploymentLocks(), _dirs.Paths, NullLogger.Instance);
 
-        var result = await deployer.DeployAsync(Repo, DeployTrigger.Manual);
+        var result = await deployer.DeployAsync(Repo, "main", DeployTrigger.Manual);
 
         var completed = Assert.IsType<DeployResult.Completed>(result);
         Assert.True(completed.Succeeded,
             $"deploy failed: {deploys.Get(completed.LastDeployId)?.Error}");
-        Assert.True(projects.GetByRepo(Repo)!.WebhookActive);
+        Assert.True(deployments.Get(deployment.Id)!.WebhookActive);
 
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
         var up = false;

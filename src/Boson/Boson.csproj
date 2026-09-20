@@ -49,6 +49,11 @@
     <!-- Dapper and System.Text.Json reach our models and RPC records purely by
          reflection, which the trimmer cannot see. -->
     <TrimmerRootAssembly Include="boson" />
+
+    <!-- YamlDotNet resolves its converters and its model of our types by
+         reflection too, and a trimmed-away path there means `_boson.yml` stops
+         parsing. -->
+    <TrimmerRootAssembly Include="YamlDotNet" />
   </ItemGroup>
 
   <ItemGroup>

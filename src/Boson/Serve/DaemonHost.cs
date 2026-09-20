@@ -40,6 +40,7 @@ public sealed class DaemonHost(BosonPaths paths, int port)
         migrator.MigrateToLatest();
 
         var projects = new ProjectsRepository(db);
+        var deployments = new DeploymentsRepository(db);
         var platform = new PlatformRepository(db);
         var deploys = new DeploysRepository(db);
 
@@ -72,14 +73,21 @@ public sealed class DaemonHost(BosonPaths paths, int port)
         var git = new GitCli(runner);
         var docker = new DockerCli(runner);
         var dns = new DnsResolver();
-        var locks = new ProjectLocks();
+        var locks = new DeploymentLocks();
         var github = new GithubClient();
         var minter = new InstallationTokenMinter(projects, github);
-        var caddy = new CaddySynchroniser(new CaddyConfigBuilder(), new CaddyAdminClient(), projects, platform);
-        var deployer = new Deployer(projects, deploys, minter, git, docker, locks, paths, log);
-        var orchestrator = new ManifestFlowOrchestrator(projects, platform, caddy, git, minter, github, locks, dns, paths, TimeProvider.System, log);
-        var publicApp = BuildPublicApp(projects, locks, deployer, orchestrator, log);
-        var rpcApp = BuildRpcApp(projects, docker, caddy, deployer, orchestrator, log);
+        var caddy = new CaddySynchroniser(new CaddyConfigBuilder(), new CaddyAdminClient(), deployments, platform);
+        var deployer = new Deployer(
+            projects, deployments, deploys, minter, git, docker, caddy, locks, paths, log);
+        var orchestrator = new ManifestFlowOrchestrator(
+            projects, deployments, platform, caddy, git, minter, github, dns, paths, TimeProvider.System, log);
+        var reaper = new ExpiryReaper(deployments, deploys, deployer, TimeProvider.System, log);
+        var publicApp = BuildPublicApp(projects, deployments, locks, deployer, orchestrator, log);
+        var rpcApp = BuildRpcApp(projects, deployments, docker, caddy, deployer, orchestrator, log);
+
+        // Fire and forget: the loop catches its own failures, and the daemon
+        // stopping cancels it.
+        _ = reaper.RunAsync(ct);
 
         await publicApp.StartAsync(ct);
         await rpcApp.StartAsync(ct);
@@ -137,7 +145,8 @@ public sealed class DaemonHost(BosonPaths paths, int port)
 
     private WebApplication BuildPublicApp(
         IProjectsRepository projects,
-        ProjectLocks locks,
+        IDeploymentsRepository deployments,
+        DeploymentLocks locks,
         IDeployer deployer,
         ManifestFlowOrchestrator orchestrator,
         ILogger log)
@@ -157,10 +166,10 @@ public sealed class DaemonHost(BosonPaths paths, int port)
 
         var app = builder.Build();
 
-        app.MapGet("/_boson/health", () =>
-            Results.Json(new { status = "ok", version = VersionInfo.Version, startedAt = _startedAt }));
+        app.MapGet("/_boson/health", () => Results.Json(
+            new HealthResponse("ok", VersionInfo.Version, _startedAt), RpcJson.Default.HealthResponse));
 
-        WebhookEndpoint.Map(app, projects, locks, deployer, log);
+        WebhookEndpoint.Map(app, projects, deployments, locks, deployer, log);
 
         // These three are the only record of a setup flow's progress: the
         // pending entries are in-memory, so a 404 here is otherwise invisible.
@@ -218,6 +227,7 @@ public sealed class DaemonHost(BosonPaths paths, int port)
 
     private WebApplication BuildRpcApp(
         IProjectsRepository projects,
+        IDeploymentsRepository deployments,
         IDockerCli docker,
         ICaddySynchroniser caddy,
         IDeployer deployer,
@@ -254,9 +264,31 @@ public sealed class DaemonHost(BosonPaths paths, int port)
             return status is null ? Results.NotFound() : Results.Ok(status);
         });
 
-        app.MapPost("/deploy/{org}/{name}", async (string org, string name) =>
+        app.MapPost("/deploy/{org}/{name}", async (HttpContext ctx, string org, string name) =>
         {
             var repo = $"{org}/{name}".ToLowerInvariant();
+            var requested = ctx.Request.Query["branch"].ToString();
+
+            var active = deployments.ListActiveForRepo(repo);
+
+            if (active.Count == 0)
+                return Results.NotFound(new ErrorResponse(
+                    $"no deployments for {repo}; `_boson.yml` declares them and `boson add` reads it"));
+
+            // Deploying every branch on a bare `boson deploy <repo>` would
+            // rebuild sites nobody asked about, so more than one means naming
+            // the one you meant.
+            if (string.IsNullOrWhiteSpace(requested) && active.Count > 1)
+                return Results.Conflict(new ErrorResponse(
+                    $"{repo} deploys {string.Join(", ", active.Select(d => d.Branch))}; " +
+                    "name one with --branch"));
+
+            var targets = string.IsNullOrWhiteSpace(requested)
+                ? active
+                : [.. active.Where(d => d.Branch == requested)];
+
+            if (targets.Count == 0)
+                return Results.NotFound(new ErrorResponse($"{repo} has no deployment for {requested}"));
 
             // Race the deploy id against the deploy itself. The CLI needs the id
             // to start tailing the log, and it arrives long before the deploy
@@ -265,24 +297,35 @@ public sealed class DaemonHost(BosonPaths paths, int port)
             // waiting only on the id would hang the CLI on exactly those.
             var started = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            var deployTask = Task.Run(() =>
-                deployer.DeployAsync(repo, DeployTrigger.Manual, id => started.TrySetResult(id)));
+            var deployTask = Task.Run(async () =>
+            {
+                DeployResult last = new DeployResult.NotFound();
+
+                foreach (var target in targets)
+                    last = await deployer.DeployAsync(
+                        repo, target.Branch, DeployTrigger.Manual, id => started.TrySetResult(id));
+
+                return last;
+            });
 
             _ = deployTask.ContinueWith(
                 t => log.LogError(t.Exception, "{Repo}: manual deploy task crashed", repo),
                 TaskContinuationOptions.OnlyOnFaulted);
 
             var winner = await Task.WhenAny(started.Task, deployTask);
-            
+
             if (winner == started.Task)
                 return Results.Json(new DeployStartResponse(await started.Task),
-                    statusCode: StatusCodes.Status202Accepted);
+                    RpcJson.Default.DeployStartResponse, statusCode: StatusCodes.Status202Accepted);
 
             return await deployTask switch
             {
-                DeployResult.Completed c => Results.Json(new DeployStartResponse(c.LastDeployId), statusCode: StatusCodes.Status202Accepted),
-                DeployResult.LockHeld => Results.Conflict(new ErrorResponse("a deploy for this project is already running")),
+                DeployResult.Completed c => Results.Json(new DeployStartResponse(c.LastDeployId),
+                    RpcJson.Default.DeployStartResponse, statusCode: StatusCodes.Status202Accepted),
+                DeployResult.LockHeld => Results.Conflict(new ErrorResponse("a deploy for this branch is already running")),
                 DeployResult.NotFound => Results.NotFound(new ErrorResponse("unknown project")),
+                DeployResult.NotDeclared => Results.Conflict(new ErrorResponse(
+                    $"{BosonFile.FileName} declares no deployment for this branch")),
                 _ => Results.Conflict(new ErrorResponse("deploy coalesced")),
             };
         });
@@ -295,13 +338,21 @@ public sealed class DaemonHost(BosonPaths paths, int port)
 
             if (project is null) return Results.NotFound(new ErrorResponse("unknown project"));
 
+            // Every branch this repository deploys, because removing a project
+            // that left one of its branches running is a site nothing manages.
             // The compose project name alone identifies the containers, so a
             // missing checkout doesn't block removal.
-            var down = await docker.ComposeDownAsync(RepoName.ComposeProjectName(repo));
-            
-            if (!down.Ok)
-                log.LogWarning("{Repo}: compose down exited {Code}: {Err}",
-                    repo, down.ExitCode, down.StdErr.Trim());
+            foreach (var deployment in deployments.ListActiveForRepo(repo))
+            {
+                var down = await docker.ComposeDownAsync(
+                    RepoName.ComposeProjectName(repo, deployment.Label));
+
+                if (!down.Ok)
+                    log.LogWarning("{Repo}#{Branch}: compose down exited {Code}: {Err}",
+                        repo, deployment.Branch, down.ExitCode, down.StdErr.Trim());
+
+                deployments.Archive(deployment.Id);
+            }
 
             if (purge)
             {

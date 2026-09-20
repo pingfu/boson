@@ -4,7 +4,7 @@ Push-to-deploy for a single Linux server.
 
 Boson runs on your production host and automatically clones your GitHub repos and runs each one with `docker compose up -d --build`, routes a public hostname to each with automatic TLS using Caddy, and redeploys on every push.
 
-Per project it takes two inputs: the repo and a public hostname.
+Per project it takes one input: the repo. What it serves is in the repo's own `_boson.yml`.
 
 ![Your CI pipeline stays; boson absorbs the image registry, deploy step, reverse proxy and TLS renewal that would otherwise sit between a merge and a live container.](assets/boson-architecture-light.svg)
 
@@ -16,12 +16,11 @@ Boson keeps the deploy path server-side and webhook-driven:
 GitHub push webhook -> boson -> git fetch/reset -> docker compose up -d --build
 ```
 
-1. **Point DNS at the server**, instead of allowlisting GitHub Actions runner IPs.
-2. **Open ports 80 and 443**, instead of opening SSH to GitHub-hosted runners.
-3. **Install Docker, git and the boson binary**, instead of putting SSH private keys in GitHub Secrets.
-4. **Complete a GitHub App setup flow**, instead of running a Docker registry for deploys.
-5. **Keep app secrets in server-side env files**, instead of storing registry pull credentials on the server.
-6. **Let the production host build from the repo checkout**, instead of running a self-hosted CI runner on production.
+1. **Point DNS at your server** for boson's admin hostname and each deployment hostname.
+2. **Run `boson init <hostname>` to install boson on your server**, which will receives GitHub webhooks and route traffic to your deployed Docker containers.
+3. **Run `boson add <org/name>` to connect your server to GitHub and fetch your private repo.**
+4. **Setup your projects secrets** in `/var/lib/boson/env/<org>/<name>/...` for each container runtime environment.
+5. **Use `boson deploy <org/name>` to build and run** your project's containers.
 
 General challenges boson is avoiding:
 
@@ -71,24 +70,19 @@ and a `docker-compose.yml` whose web-facing service publishes to loopback on `${
 services:
   web:
     build: .
+    image: my-app:${BOSON_COMMIT}             # so old builds stay deployable
     ports:
       - "127.0.0.1:${BOSON_HOST_PORT}:8080"   # boson's port : your app's port
     env_file: ${BOSON_ENV_FILE}               # if your app takes env vars
 ```
 
-That pair is the whole contract. One repo can serve several hostnames, deploy more than one branch, and give each pull request a hostname of its own: [BOSON_YML.md](BOSON_YML.md) covers the format.
+That pair is the whole contract. One repo can serve several hostnames and deploy more than one branch, each to its own hostname with its own containers: [BOSON_YML.md](BOSON_YML.md) covers the format.
 
 `env: production` names a set of environment variables that lives on the server and never in the repo. You create the file after `boson add` and before the first deploy, at `/var/lib/boson/env/<org>/<name>/production`, and boson passes it to compose as `$BOSON_ENV_FILE`. Nothing is written into the checkout, so `git reset --hard` on each deploy cannot touch it, and a `--purge` cannot take it. Commit a template (`.env.example`) so the shape is in the repo and the values aren't. Different branches can name different sets, which is what keeps a preview branch off the production credentials.
 
-boson picks the host port when you add the project, and sets `BOSON_HOST_PORT` for every `docker compose` it runs. Your repo names only the port your app listens on inside the container, `8080` here, so the same repo deploys to any boson server without carrying a number that's true on one machine. A deploy whose compose file publishes some other host port fails before it builds, and says which port boson expected.
+boson picks the host port per branch, and sets `BOSON_HOST_PORT` for every `docker compose` it runs. Your repo names only the port your app listens on inside the container, `8080` here, so the same repo deploys to any boson server without carrying a number that's true on one machine. A deploy whose compose file publishes some other host port fails before it builds, and says which port boson expected.
 
-Running compose by hand in a checkout needs both variables, with the port from `boson status`:
-
-```bash
-BOSON_HOST_PORT=30000 \
-BOSON_ENV_FILE=/var/lib/boson/env/org/my-app/production \
-  docker compose up -d
-```
+`BOSON_COMMIT` is the commit that deploy fetched. Tagging the image with it gives each build a name of its own instead of overwriting `latest`, which is what lets `images.keep` retain the last few and delete the rest. An app that reports its own version wants the same value.
 
 Four ports belong to the platform, and boson allocates from 30000-32767:
 
@@ -104,14 +98,12 @@ Caddy proxies the public hostname to that loopback port. The whole hostname maps
 ## Add a project
 
 ```bash
-boson add org/my-app --hostname my-app.example.com
+boson add org/my-app
 ```
 
-Projects are referenced by repo name in every later command (`boson deploy org/my-app`). `--branch <name>` sets the tracked branch (default: `main`).
+Nothing else to pass: the repo's `_boson.yml` names the hostnames and branches, and `add` clones the repo to read it.
 
-`add` allocates this project's host port, skipping any another project holds and any the host is already listening on. `boson status` shows which one it picked.
-
-`add` prints a setup URL; open it in any browser (your own machine is fine): you create a GitHub App for the project, then install it on the repo. Boson then fetches the repo into `/srv/org/my-app/` and sets up the hostname's routing and certificate.
+`add` prints a setup URL; open it in any browser (your own machine is fine): you create a GitHub App for the project, then install it on the repo. Boson then clones the default branch into `/srv/org/my-app/<branch>/`, creates a deployment for every branch the file names outright, allocates each one a host port, and sets up routing and certificates. `boson status` shows what it made.
 
 Ctrl-C stops the progress display, not the add: complete the browser steps and the project is added anyway (`boson status` shows it). Abandon the browser instead and nothing was saved; re-run the same command to start over.
 
@@ -123,11 +115,13 @@ cp /srv/org/my-app/.env.example /var/lib/boson/env/org/my-app/production
 $EDITOR /var/lib/boson/env/org/my-app/production
 ```
 
-Then `boson deploy org/my-app`: the first successful deploy switches on push-to-deploy. A deploy whose set doesn't exist fails naming the path, so a missing secret is never a half-started container.
+Then `boson deploy org/my-app`. A project serving more than one branch needs `--branch <name>` to say which. The first successful deploy of a branch switches on push-to-deploy for it. A deploy whose set doesn't exist fails naming the path, so a missing secret is never a half-started container.
 
 ## Deploy
 
-**Every push to the tracked branch deploys automatically**: fetch, `docker compose up -d --build`, live. Pushes that land mid-deploy are remembered: the newest commit deploys when the running one finishes, and a burst of pushes costs at most one extra deploy.
+**Every push to a declared branch deploys automatically**: fetch, `docker compose up -d --build`, live. Pushes that land mid-deploy are remembered: the newest commit deploys when the running one finishes, and a burst of pushes costs at most one extra deploy. Two branches deploying at once don't wait for each other.
+
+Push a branch that matches a pattern entry and boson creates its deployment on the spot: a hostname from the template, a port of its own, a certificate. It runs until its `expire_after` elapses, or until the project is removed.
 
 `boson deploy org/my-app` deploys by hand: the first deploy after `add`, and any redeploy later. Safe to re-run. A deploy succeeds when `docker compose up` exits 0; add a compose `healthcheck` if you want a health gate.
 
@@ -140,7 +134,7 @@ In App → Advanced → Recent Deliveries: red means broken, green means fine.
 | Status | Meaning |
 |---|---|
 | 202 | Push verified, deploy queued |
-| 200 | Push verified, nothing to do (ping, untracked branch, or project awaiting first deploy) |
+| 200 | Push verified, nothing to do (ping, a tag, or a branch awaiting its first deploy) |
 | 403 | Signature mismatch: the stored secret and GitHub disagree. An incident. |
 
 A 202 means the deploy was queued; its outcome lives in `boson status` and the deploy log. Recover a failed delivery with GitHub's Redeliver button, or just run `boson deploy <org/name>`.
@@ -149,20 +143,20 @@ A 202 means the deploy was queued; its outcome lives in `boson status` and the d
 
 ```
 boson init <admin-hostname>   # install the platform
-boson add <org/name> ...      # add a project (then: boson deploy)
-boson deploy <org/name>       # redeploy by hand
-boson status                  # platform and projects: version, containers, last deploy
-boson remove <org/name>       # tear down a project
+boson add <org/name>          # add a project (then: boson deploy)
+boson deploy <org/name>       # redeploy by hand; --branch <name> picks one of several
+boson status                  # platform and deployments: version, containers, last deploy
+boson remove <org/name>       # tear down a project and every branch it deploys
 boson uninstall               # remove the platform
 ```
 
 Run every command as root: the CLI manages the platform's user, systemd unit and data directories, and the daemon's socket admits only root and the `boson` user.
 
-Exit codes: `0` success · `1` user error · `2` runtime failure · `3` deploy already running · `99` internal bug (file an issue).
+Exit codes: `0` success Â· `1` user error Â· `2` runtime failure Â· `3` deploy already running Â· `99` internal bug (file an issue).
 
 `https://deploy.example.com/_boson/health` returns the running version. When it doesn't answer, `systemctl status boson` says why.
 
-`boson status` reports the daemon's version and the admin URL, then hostname, branch, host port, webhook, container states and last deploy for each project.
+`boson status` reports the daemon's version and the admin URL, then repo, branch, hostname, host port, webhook, container states and last deploy for every deployment.
 
 For everything else, the usual tools work: `docker logs` for container output, `journalctl -u boson` for the daemon, `/var/log/boson/deploys/` for per-deploy build output.
 
@@ -180,22 +174,25 @@ boson --version
 
 Your sites keep serving throughout, and the restart waits for a deploy in flight to finish.
 
-## Back up one file
+## Back up one directory
 
-`/var/lib/boson/boson.db` holds every project's GitHub App private key and webhook secret. GitHub issues these once and cannot re-issue them; lose the file and every project must be re-added by hand. Keep a copy off-host. A `cp` taken mid-write can be corrupt; snapshot with:
+`/var/lib/boson/` holds the two things the host cannot recreate: `boson.db`, with every project's GitHub App private key and webhook secret, and `env/`, with your environment sets. GitHub issues the App keys once and cannot re-issue them; lose them and every project must be re-added by hand. A `cp` of the database taken mid-write can be corrupt, so snapshot it first, then take the lot:
 
 ```bash
-sqlite3 /var/lib/boson/boson.db "VACUUM INTO '/backup/boson.db'"
+sqlite3 /var/lib/boson/boson.db "VACUUM INTO '/var/lib/boson/boson.db.backup'"
+tar -czf /backup/boson.tar.gz -C /var/lib/boson boson.db.backup env
 ```
+
+Keep a copy off-host. Everything else is rebuildable: checkouts come back from GitHub, images from a build.
 
 ## Remove a project
 
 ```bash
-boson remove <org/name>           # stop containers, drop routing, keep the record
+boson remove <org/name>           # stop every branch's containers, drop routing, keep the record
 boson remove <org/name> --purge   # also delete the record and /srv/<org>/<name>
 ```
 
-Boson prints the App's settings URL so you can uninstall it on GitHub. The hostname and port are freed for reuse either way.
+Boson prints the App's settings URL so you can uninstall it on GitHub. Every hostname and port the project held is freed for reuse either way.
 
 ## Uninstall the platform
 

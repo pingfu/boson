@@ -36,12 +36,12 @@ public enum SetupPhase
 /// </summary>
 public sealed class ManifestFlowOrchestrator(
     IProjectsRepository projects,
+    IDeploymentsRepository deployments,
     IPlatformRepository platform,
     ICaddySynchroniser caddy,
     IGitCli git,
     IInstallationTokenMinter minter,
     IGithubClient github,
-    ProjectLocks locks,
     IDnsResolver dns,
     BosonPaths paths,
     TimeProvider clock,
@@ -53,10 +53,11 @@ public sealed class ManifestFlowOrchestrator(
     {
         public required string Token { get; init; }
         public required string Repo { get; init; }
-        public required string Hostname { get; init; }
-        public required int Port { get; init; }
-        public required string Branch { get; init; }
         public required DateTimeOffset CreatedAt { get; init; }
+        public List<string> Warnings { get; } = [];
+
+        /// <summary>What the clone turned out to need, for the CLI to name as files to create.</summary>
+        public List<string> EnvSets { get; } = [];
         public SetupPhase Phase { get; set; } = SetupPhase.AwaitingManifest;
         public ManifestConversion? Credentials { get; set; }
         public string? Error { get; set; }
@@ -73,63 +74,32 @@ public sealed class ManifestFlowOrchestrator(
 
         if (!RepoName.TryCanonicalise(request.Repo, out var repo))
             throw new BosonValidationException($"invalid repo (expected org/name): {request.Repo}");
-        if (string.IsNullOrWhiteSpace(request.Hostname))
-            throw new BosonValidationException("hostname is required");
-        var hostname = request.Hostname.Trim().ToLowerInvariant();
-        var branch = string.IsNullOrWhiteSpace(request.Branch) ? "main" : request.Branch.Trim();
 
-        var active = projects.ListActive();
+        if (projects.GetByRepo(repo) is not null)
+            throw new BosonValidationException($"repo already added: {repo}");
 
-        foreach (var p in active)
-        {
-            if (p.Repo == repo)
-                throw new BosonValidationException($"repo already added: {repo}");
-            if (p.Hostname == hostname)
-                throw new BosonValidationException($"hostname already claimed by {p.Repo}: {hostname}");
-        }
-
-        // Allocated here, in the daemon, against live database state: two
-        // concurrent adds asking a CLI to pick would race for the same number.
-        var port = HostPortAllocator.Allocate(
-            active.Select(p => p.UpstreamPort), HostPortAllocator.IsFreeOnHost);
-
-        var warnings = new List<string>();
-        var addresses = await dns.ResolveAsync(hostname, ct);
-        if (addresses.Count == 0)
-            throw new BosonValidationException(
-                $"hostname does not resolve: {hostname} — create the DNS record first");
-        if (!dns.AnyMatchesLocalInterface(addresses))
-            warnings.Add(
-                $"{hostname} resolves to no local interface (common and legitimate behind NAT); " +
-                "whether it points at this host is proven by opening the site");
-
-        // Every project gets a www redirect route, so Caddy will request a
-        // certificate for that name too. Missing record: Caddy retries the ACME
-        // challenge with backoff and the project's own hostname is unaffected.
-        if (!hostname.StartsWith("www.", StringComparison.Ordinal)
-            && (await dns.ResolveAsync($"www.{hostname}", ct)).Count == 0)
-            warnings.Add(
-                $"www.{hostname} does not resolve; boson serves a redirect for it anyway, so " +
-                "Caddy will keep retrying certificate issuance until the record exists");
-
+        // Hostnames come from `_boson.yml`, which lives in the repository, which
+        // needs the App that this flow is about to create. So nothing about
+        // what gets served is known yet, and the checks on it happen after the
+        // clone rather than here.
         var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
         var entry = new PendingSetup
         {
             Token = token,
             Repo = repo,
-            Hostname = hostname,
-            Port = port,
-            Branch = branch,
             CreatedAt = clock.GetUtcNow(),
         };
+
         lock (_gate)
         {
             Sweep();
             _pending[token] = entry;
         }
 
+        await Task.CompletedTask;
+
         return new AddStartResponse(
-            $"https://{admin}/_boson/setup-app/start?state={token}", token, [.. warnings]);
+            $"https://{admin}/_boson/setup-app/start?state={token}", token, []);
     }
 
     public string? RenderStartPage(string state)
@@ -145,12 +115,13 @@ public sealed class ManifestFlowOrchestrator(
             ["url"] = $"https://github.com/{entry.Repo}",
             ["redirect_url"] = $"https://{admin}/_boson/setup-app/callback",
             ["setup_url"] = $"https://{admin}/_boson/setup-app/installed",
-            // Deliveries land on the project's own public hostname; only the
-            // browser-driven redirects use the (possibly private) admin name.
+            // The App must carry a webhook address at creation, and the one
+            // deliveries need is in a repository this App does not yet exist to
+            // read. The admin name holds the place until the clone names the
+            // hostname, and boson moves it with the App's own token.
             ["hook_attributes"] = new JsonObject
             {
-                ["url"] =
-                    $"https://{entry.Hostname}{CaddyConfigBuilder.WebhookPathPrefix}{entry.Repo}",
+                ["url"] = $"https://{admin}{CaddyConfigBuilder.WebhookPathPrefix}{entry.Repo}",
             },
             ["public"] = false,
             ["default_events"] = new JsonArray("push"),
@@ -214,12 +185,10 @@ public sealed class ManifestFlowOrchestrator(
         try
         {
             var credentials = entry.Credentials!;
-            projects.Insert(new Project
+
+            var projectId = projects.Insert(new Project
             {
                 Repo = entry.Repo,
-                Hostname = entry.Hostname,
-                UpstreamPort = entry.Port,
-                Branch = entry.Branch,
                 GithubAppId = credentials.Id,
                 GithubAppSlug = credentials.Slug,
                 GithubInstallationId = installationId,
@@ -227,29 +196,68 @@ public sealed class ManifestFlowOrchestrator(
                 GithubAppPem = credentials.Pem,
             });
 
-            await caddy.SyncAsync();
             entry.Phase = SetupPhase.Fetching;
 
-            // Initial fetch under the project's lock; lock held means a
-            // deploy is already running the identical fetch, so skip it.
-            if (locks.TryEnter(entry.Repo))
+            InstallationToken token;
+            string defaultBranch;
+            string checkoutDir;
+
+            try
+            {
+                token = await minter.MintAsync(entry.Repo);
+
+                // Whatever GitHub calls the default branch, rather than a guess
+                // at `main` that a repository is free to disagree with.
+                defaultBranch = await github.GetDefaultBranchAsync(entry.Repo, token.Value);
+
+                checkoutDir = paths.CheckoutDir(entry.Repo, BranchLabel.From(defaultBranch));
+
+                await git.FetchAndResetAsync(checkoutDir, entry.Repo, defaultBranch, token.Value);
+            }
+            catch (Exception e)
+            {
+                entry.Phase = SetupPhase.FetchFailed;
+                entry.Error = $"initial fetch failed: {e.Message}";
+                logger.LogWarning(e, "{Repo}: initial fetch failed; `boson deploy` retries it", entry.Repo);
+                return;
+            }
+
+            var declared = BosonFile.Find(checkoutDir, out var problem);
+
+            if (declared is null)
+            {
+                // The App and its keys are kept: GitHub issues them once, and a
+                // file that does not read is fixed with a push.
+                entry.Phase = SetupPhase.FetchFailed;
+                entry.Error = problem ?? $"no {BosonFile.FileName} at the root of {entry.Repo}";
+                logger.LogWarning("{Repo}: {Error}", entry.Repo, entry.Error);
+                return;
+            }
+
+            await CreateDeploymentsAsync(entry, projectId, declared, defaultBranch);
+
+            await caddy.SyncAsync();
+
+            // The App was created pointing at the control plane, which GitHub
+            // may not be able to reach. Deliveries go to the default branch's
+            // own hostname, which only the clone could name.
+            var primary = deployments.GetByBranch(entry.Repo, defaultBranch);
+
+            if (primary is not null)
             {
                 try
                 {
-                    var token = await minter.MintAsync(entry.Repo);
-                    await git.FetchAndResetAsync(
-                        paths.ProjectDir(entry.Repo), entry.Repo, entry.Branch, token.Value);
+                    await github.SetWebhookUrlAsync(
+                        minter.JwtFor(credentials.Id, credentials.Pem),
+                        $"https://{primary.Hostname}{CaddyConfigBuilder.WebhookPathPrefix}{entry.Repo}");
                 }
                 catch (Exception e)
                 {
-                    entry.Phase = SetupPhase.FetchFailed;
-                    entry.Error = $"initial fetch failed: {e.Message}";
-                    logger.LogWarning(e, "{Repo}: initial fetch failed; `boson deploy` retries it", entry.Repo);
-                    return;
-                }
-                finally
-                {
-                    locks.Exit(entry.Repo);
+                    entry.Warnings.Add(
+                        $"the App's webhook address is still {platform.Get(PlatformRepository.AdminHostname)}; " +
+                        $"set it to https://{primary.Hostname}{CaddyConfigBuilder.WebhookPathPrefix}{entry.Repo} " +
+                        $"by hand, or pushes will not deploy ({e.Message})");
+                    logger.LogWarning(e, "{Repo}: could not move the App's webhook address", entry.Repo);
                 }
             }
 
@@ -262,6 +270,58 @@ public sealed class ManifestFlowOrchestrator(
             entry.Error = e.Message;
             logger.LogError(e, "add flow failed for {Repo}", entry.Repo);
         }
+    }
+
+    /// <summary>
+    /// One deployment per branch the file names outright. A pattern entry
+    /// describes branches that may not exist yet, so its deployments are
+    /// created by the pushes that produce them.
+    /// </summary>
+    private async Task CreateDeploymentsAsync(
+        PendingSetup entry, long projectId, BosonFile declared, string defaultBranch)
+    {
+        foreach (var declaration in declared.Deployments.Where(d => !d.IsPattern))
+        {
+            var hostname = declaration.HostnameFor(declaration.Branch);
+
+            var addresses = await dns.ResolveAsync(hostname);
+
+            if (addresses.Count == 0)
+                entry.Warnings.Add(
+                    $"{hostname} does not resolve; create the DNS record or Caddy will keep " +
+                    "retrying certificate issuance");
+            else if (!dns.AnyMatchesLocalInterface(addresses))
+                entry.Warnings.Add(
+                    $"{hostname} resolves to no local interface (common and legitimate behind NAT); " +
+                    "whether it points at this host is proven by opening the site");
+
+            deployments.Insert(new Deployment
+            {
+                ProjectId = projectId,
+                Repo = entry.Repo,
+                Branch = declaration.Branch,
+                Label = BranchLabel.From(declaration.Branch),
+                Hostname = hostname,
+                Aliases = string.Join(',', declaration.Aliases),
+                HostPort = HostPortAllocator.Allocate(
+                    deployments.ListActive().Select(d => d.HostPort), HostPortAllocator.IsFreeOnHost),
+                EnvSet = declaration.Env,
+                ExpireAfter = declaration.ExpireAfter,
+            });
+
+            logger.LogInformation(
+                "{Repo}#{Branch}: deployment declared for {Hostname}", entry.Repo, declaration.Branch, hostname);
+        }
+
+        entry.EnvSets.AddRange(declared.Deployments
+            .Select(d => d.Env)
+            .Where(set => set is not null)
+            .Distinct()
+            .Order()!);
+
+        if (declared.Match(defaultBranch) is null)
+            entry.Warnings.Add(
+                $"{BosonFile.FileName} declares no deployment for {defaultBranch}, the default branch");
     }
 
     public AddStatusResponse? GetStatus(string token)
@@ -278,7 +338,7 @@ public sealed class ManifestFlowOrchestrator(
             SetupPhase.FetchFailed => "fetch_failed",
             _ => "failed",
         };
-        return new AddStatusResponse(phase, null, entry.Error);
+        return new AddStatusResponse(phase, null, entry.Error, [.. entry.Warnings], [.. entry.EnvSets]);
     }
 
     internal Task? TryGetFinalisation(string token) => Lookup(token)?.Finalisation;

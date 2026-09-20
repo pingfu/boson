@@ -70,7 +70,7 @@ public static class UninstallCommand
             Console.Error.WriteLine($"refusing to uninstall: {activeProjects.Count} active project(s) exist:");
             
             foreach (var p in activeProjects)
-                Console.Error.WriteLine($"  {p.Repo}  ({p.Hostname})");
+                Console.Error.WriteLine($"  {p.Repo}");
             
             Console.Error.WriteLine("remove them first (boson remove <org/name>) or pass --force");
             

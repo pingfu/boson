@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 
 namespace Boson.Github;
@@ -13,6 +14,16 @@ public interface IGithubClient
     /// <summary>POST /app/installations/{id}/access_tokens with a Bearer JWT.</summary>
     Task<InstallationToken> CreateInstallationTokenAsync(
         string jwt, long installationId, CancellationToken ct = default);
+
+    /// <summary>GET /repos/{repo}, for the branch the repository itself calls default.</summary>
+    Task<string> GetDefaultBranchAsync(
+        string repo, string installationToken, CancellationToken ct = default);
+
+    /// <summary>
+    /// PATCH /app/hook/config, which an App may call about itself. This is what
+    /// moves deliveries off the placeholder address the manifest had to carry.
+    /// </summary>
+    Task SetWebhookUrlAsync(string jwt, string url, CancellationToken ct = default);
 }
 
 public sealed class GithubClient : IGithubClient
@@ -65,6 +76,41 @@ public sealed class GithubClient : IGithubClient
         return new InstallationToken(
             root.GetProperty("token").GetString()!,
             root.GetProperty("expires_at").GetDateTimeOffset());
+    }
+
+    public async Task<string> GetDefaultBranchAsync(
+        string repo, string installationToken, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}/repos/{repo}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", installationToken);
+
+        var response = await _http.SendAsync(request, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+
+        if (!response.IsSuccessStatusCode)
+            throw new GithubApiException(
+                $"could not read {repo} ({(int)response.StatusCode}): {body}");
+
+        using var doc = JsonDocument.Parse(body);
+
+        return doc.RootElement.GetProperty("default_branch").GetString()!;
+    }
+
+    public async Task SetWebhookUrlAsync(string jwt, string url, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Patch, $"{BaseUrl}/app/hook/config")
+        {
+            Content = new StringContent(
+                $$"""{"url":"{{url}}"}""", Encoding.UTF8, new MediaTypeHeaderValue("application/json")),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", jwt);
+
+        var response = await _http.SendAsync(request, ct);
+
+        if (!response.IsSuccessStatusCode)
+            throw new GithubApiException(
+                $"could not set the App's webhook address ({(int)response.StatusCode}): " +
+                await response.Content.ReadAsStringAsync(ct));
     }
 }
 

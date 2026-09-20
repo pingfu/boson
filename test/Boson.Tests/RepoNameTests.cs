@@ -35,9 +35,13 @@ public class RepoNameTests
     }
 
     [Theory]
-    [InlineData("acme/site", "acme-site")]
-    [InlineData("acme/my_app", "acme-my_app")]
-    [InlineData("acme/app.v2", "acme-app-v2")]
-    public void Compose_project_name_replaces_disallowed_characters(string repo, string expected) =>
-        Assert.Equal(expected, RepoName.ComposeProjectName(repo));
+    [InlineData("acme/site", "main", "acme-site-main")]
+    [InlineData("acme/my_app", "main", "acme-my_app-main")]
+    [InlineData("acme/app.v2", "main", "acme-app-v2-main")]
+    // Two branches of one repository must not share a compose project, or one
+    // deploy tears down the other's containers.
+    [InlineData("acme/site", "feature-x", "acme-site-feature-x")]
+    public void Compose_project_name_replaces_disallowed_characters(
+        string repo, string label, string expected) =>
+        Assert.Equal(expected, RepoName.ComposeProjectName(repo, label));
 }

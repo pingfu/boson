@@ -15,6 +15,9 @@ public sealed class FakeGitCli : IGitCli
     public Exception? Throw;
     public Action<string>? OnFetchDir;
 
+    /// <summary>The sha the next fetch will report, for tests that assert on the tag it becomes.</summary>
+    public string NextSha => $"{Calls + 1:x8}" + new string('0', 32);
+
     public async Task<string> FetchAndResetAsync(
         string projectDir, string repo, string branch, string token,
         Action<string>? log = null, CancellationToken ct = default)
@@ -37,12 +40,14 @@ public sealed class FakeDockerCli : IDockerCli
     public readonly List<ComposeVariables> VariablesPassed = [];
 
     /// <summary>What `compose config` reports; the default publishes whatever port it is asked for.</summary>
-    public Func<int, string> ConfigStdOut { get; set; } = hostPort =>
+    public Func<ComposeVariables, string> ConfigStdOut { get; set; } = variables =>
         """
-        {"services":{"web":{"ports":[
+        {"services":{"web":{"build":{},"image":"acme/site-web:TAG","ports":[
           {"mode":"ingress","host_ip":"127.0.0.1","target":3000,"published":"PORT","protocol":"tcp"}
         ]}}}
-        """.Replace("PORT", hostPort.ToString());
+        """
+        .Replace("PORT", variables.HostPort.ToString())
+        .Replace("TAG", variables.Commit);
 
     private static ProcessResult Ok() => new(0, "", "");
 
@@ -63,7 +68,7 @@ public sealed class FakeDockerCli : IDockerCli
     public Task<ProcessResult> ComposeConfigAsync(
         string projectName, string workingDirectory, ComposeVariables variables,
         CancellationToken ct = default) =>
-        Task.FromResult(new ProcessResult(0, ConfigStdOut(variables.HostPort), ""));
+        Task.FromResult(new ProcessResult(0, ConfigStdOut(variables), ""));
 
     public Task<ProcessResult> ComposeDownAsync(string projectName, CancellationToken ct = default)
     {
@@ -82,6 +87,20 @@ public sealed class FakeDockerCli : IDockerCli
 
     public Task<ProcessResult> VolumeRemoveAsync(string volume, CancellationToken ct = default) =>
         Task.FromResult(Ok());
+
+    /// <summary>Tags `docker images` reports, newest first, keyed by image name.</summary>
+    public readonly Dictionary<string, List<string>> ImageTags = [];
+    public readonly List<string> ImagesRemoved = [];
+
+    public Task<ProcessResult> ImageTagsAsync(string imageName, CancellationToken ct = default) =>
+        Task.FromResult(new ProcessResult(
+            0, string.Join('\n', ImageTags.GetValueOrDefault(imageName, [])), ""));
+
+    public Task<ProcessResult> ImageRemoveAsync(string reference, CancellationToken ct = default)
+    {
+        lock (ImagesRemoved) ImagesRemoved.Add(reference);
+        return Task.FromResult(Ok());
+    }
 }
 
 public sealed class FakeMinter : IInstallationTokenMinter
@@ -91,6 +110,8 @@ public sealed class FakeMinter : IInstallationTokenMinter
         Fail
             ? throw new GithubApiException("simulated mint failure")
             : Task.FromResult(new InstallationToken("ghs_test", DateTimeOffset.UtcNow.AddHours(1)));
+
+    public string JwtFor(long appId, string pem) => $"jwt-for-{appId}";
 }
 
 public sealed class FakeGithubClient : IGithubClient
@@ -114,6 +135,22 @@ public sealed class FakeGithubClient : IGithubClient
     {
         LastJwt = jwt;
         return Task.FromResult(new InstallationToken("ghs_test", DateTimeOffset.UtcNow.AddHours(1)));
+    }
+
+    public string DefaultBranch = "main";
+    public string? WebhookUrlSet;
+    public bool FailWebhookUrl;
+
+    public Task<string> GetDefaultBranchAsync(
+        string repo, string installationToken, CancellationToken ct = default) =>
+        Task.FromResult(DefaultBranch);
+
+    public Task SetWebhookUrlAsync(string jwt, string url, CancellationToken ct = default)
+    {
+        if (FailWebhookUrl) throw new GithubApiException("simulated webhook config failure");
+
+        WebhookUrlSet = url;
+        return Task.CompletedTask;
     }
 }
 
@@ -143,17 +180,26 @@ public sealed class FakeDnsResolver : IDnsResolver
 
 public sealed class FakeDeployer : IDeployer
 {
-    public readonly List<(string Repo, DeployTrigger Trigger)> Calls = [];
+    public readonly List<(string Repo, string Branch, DeployTrigger Trigger)> Calls = [];
+    public readonly List<Deployment> TearDowns = [];
     public readonly TaskCompletionSource Invoked = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public readonly TaskCompletionSource TornDown = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task<DeployResult> DeployAsync(
-        string repo, DeployTrigger trigger,
+        string repo, string branch, DeployTrigger trigger,
         Action<long>? onStarted = null, CancellationToken ct = default)
     {
-        lock (Calls) Calls.Add((repo, trigger));
+        lock (Calls) Calls.Add((repo, branch, trigger));
         onStarted?.Invoke(1);
         Invoked.TrySetResult();
         return Task.FromResult<DeployResult>(new DeployResult.Completed(1, true, 1));
+    }
+
+    public Task TearDownAsync(Deployment deployment, CancellationToken ct = default)
+    {
+        lock (TearDowns) TearDowns.Add(deployment);
+        TornDown.TrySetResult();
+        return Task.CompletedTask;
     }
 
     public Task WaitForIdleAsync(TimeSpan timeout) => Task.CompletedTask;

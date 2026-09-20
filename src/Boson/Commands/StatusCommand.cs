@@ -36,7 +36,7 @@ public static class StatusCommand
         new Migrator(db).CheckCompatibility();
 
         var platform = new PlatformRepository(db);
-        var projects = new ProjectsRepository(db);
+        var deployments = new DeploymentsRepository(db);
         var deploys = new DeploysRepository(db);
         var docker = new DockerCli(new ProcessRunner());
 
@@ -48,16 +48,16 @@ public static class StatusCommand
         var daemon = await ProbeDaemonAsync(ct);
         var now = DateTimeOffset.UtcNow;
 
-        var rows = new List<ProjectListEntry>();
+        var rows = new List<DeploymentEntry>();
 
-        foreach (var p in projects.ListActive())
+        foreach (var d in deployments.ListActive())
         {
-            var ps = await docker.ComposePsAsync(RepoName.ComposeProjectName(p.Repo), ct);
+            var ps = await docker.ComposePsAsync(RepoName.ComposeProjectName(d.Repo, d.Label), ct);
             var containers = ps.Ok ? SummariseComposePs(ps.StdOut) : "unavailable";
-            var last = deploys.GetLatestForProject(p.Id);
+            var last = deploys.GetLatestForDeployment(d.Id);
 
-            rows.Add(new ProjectListEntry(
-                p.Repo, p.Hostname, p.UpstreamPort, p.Branch, p.WebhookActive,
+            rows.Add(new DeploymentEntry(
+                d.Repo, d.Branch, d.Hostname, [.. d.AliasList], d.HostPort, d.WebhookActive,
                 containers,
                 last is null
                     ? null
@@ -65,7 +65,7 @@ public static class StatusCommand
                         last.FinishedAt, last.LogPath, last.Error),
 
                 // A pending flag with nothing running means a redeploy was dropped.
-                DeployPendingIdle: p.DeployPending && last?.Status != DeployStatus.Running));
+                DeployPendingIdle: d.DeployPending && last?.Status != DeployStatus.Running));
         }
 
         await DbOwnership.ChownToBosonAsync(new ProcessRunner(), paths.DbPath);
@@ -86,7 +86,7 @@ public static class StatusCommand
 
         if (rows.Count == 0)
         {
-            Console.WriteLine("no projects — add one with: boson add <org/name> --hostname <host>");
+            Console.WriteLine("no deployments — add a project with: boson add <org/name>");
             return ExitCodes.Success;
         }
 
@@ -108,10 +108,14 @@ public static class StatusCommand
                   $"{Shorten(r.LastDeploy.CommitSha)} " +
                   Timestamp(r.LastDeploy.FinishedAt ?? r.LastDeploy.StartedAt, now);
 
+            var names = r.Aliases.Count == 0
+                ? r.Hostname
+                : $"{r.Hostname} (+{string.Join(", ", r.Aliases)})";
+
             table.AddRow(
                 Markup.Escape(r.Repo),
-                Markup.Escape(r.Hostname),
-                r.Port.ToString(),
+                Markup.Escape(names),
+                r.HostPort.ToString(),
                 Markup.Escape(r.Branch),
                 r.WebhookActive ? "active" : "inactive",
                 Markup.Escape(r.Containers),
@@ -122,7 +126,7 @@ public static class StatusCommand
 
         foreach (var r in rows.Where(r => r.DeployPendingIdle))
             AnsiConsole.MarkupLine(
-                $"[yellow]⚠ {Markup.Escape(r.Repo)}: a push arrived that was never deployed — recover with: boson deploy {Markup.Escape(r.Repo)}[/]");
+                $"[yellow]⚠ {Markup.Escape(r.Repo)} {Markup.Escape(r.Branch)}: a push arrived that was never deployed — recover with: boson deploy {Markup.Escape(r.Repo)}[/]");
 
         return ExitCodes.Success;
     }
@@ -200,12 +204,7 @@ public static class StatusCommand
             : dbTime;
     }
 
-    /// <summary>SQLite writes `datetime('now')`, which is UTC with no marker on it.</summary>
-    internal static DateTimeOffset? ParseDbTime(string? dbTime) =>
-        DateTime.TryParse(dbTime, CultureInfo.InvariantCulture,
-            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed)
-            ? new DateTimeOffset(DateTime.SpecifyKind(parsed, DateTimeKind.Utc))
-            : null;
+    internal static DateTimeOffset? ParseDbTime(string? dbTime) => DbTime.Parse(dbTime);
 
     internal static string Ago(DateTimeOffset when, DateTimeOffset now)
     {
@@ -306,10 +305,11 @@ public static class StatusCommand
     internal sealed record StatusEntry(
         string? AdminHostname, bool DaemonRunning, string? DaemonVersion,
         DateTimeOffset? DaemonStartedAt, string CliVersion,
-        IReadOnlyList<ProjectListEntry> Projects);
+        IReadOnlyList<DeploymentEntry> Deployments);
 
-    internal sealed record ProjectListEntry(
-        string Repo, string Hostname, int Port, string Branch, bool WebhookActive,
+    internal sealed record DeploymentEntry(
+        string Repo, string Branch, string Hostname, IReadOnlyList<string> Aliases,
+        int HostPort, bool WebhookActive,
         string Containers, LastDeployEntry? LastDeploy, bool DeployPendingIdle);
 
     internal sealed record LastDeployEntry(
