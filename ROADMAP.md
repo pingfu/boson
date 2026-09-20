@@ -4,5 +4,6 @@
 
 - **Let a project name the build boson watches for.** Take the workflow filename from the project rather than fixing it at `.github/workflows/deploy.yml`, because today a repository that already has its own workflow layout has to rename a file to suit boson. A project would name the build it wants watched when it is added, falling back to the current filename when it says nothing.
 
-- **Snapshot tests for the Caddy config and the systemd unit.** Compare generated config against a stored copy rather than against expectations written inline, because today both outputs are long enough that an unintended change is easy to miss by eye. A change would show up as a difference to approve or reject.
+- **Make running deploys visible in boson status cli output.** Surface an in-progress deploy as its own status signal rather than burying it in the last-deploy text, because during a slow build the operator wants to know whether boson is working, stuck, or idle before opening the deploy log.
 
+- **Snapshot tests for the Caddy config and the systemd unit.** Compare generated config against a stored copy rather than against expectations written inline, because today both outputs are long enough that an unintended change is easy to miss by eye. A change would show up as a difference to approve or reject.
