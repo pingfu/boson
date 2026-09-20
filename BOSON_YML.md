@@ -53,19 +53,45 @@ A hostname another active deployment already serves is a conflict: the deploy fa
 
 ## Environment sets
 
-`env` names a set. Sets live on the host, beside the checkouts rather than in one. Each branch gets its own working tree, and the project directory above them holds what belongs to the project:
+`env` names a set. The name is a filename, and the file is on the host, never in the repository:
 
 ```
-/srv/marketcanary6/market-canary/
-  env/
-    production                 <- an environment set, created by the admin
-    preview
-  main/                        <- checkout: git working tree for the main branch
-  develop/                     <- checkout
-  feature-add-search/          <- checkout, created when that branch was pushed
+env: production   →   /var/lib/boson/env/<org>/<name>/production
+env: staging      →   /var/lib/boson/env/<org>/<name>/staging
+env: (omitted)    →   no environment file; the deployment gets none
 ```
 
-A checkout directory is named by the branch's label, the same reduction that produces a `{branch}` hostname, so a directory listing and a URL name the same thing.
+So this file:
+
+```yaml
+deployments:
+  - branch: main
+    hostname: example.org
+    env: production
+  - branch: "*"
+    hostname: "{branch}.preview.example.org"
+    env: preview
+```
+
+asks for two files on the server, whatever the branches turn out to be:
+
+```
+/var/lib/boson/env/acme/site/production    <- main
+/var/lib/boson/env/acme/site/preview       <- every matched branch
+```
+
+Entries sharing a name share the file: three pattern entries naming `preview` read one file, and changing it changes what all three get on their next deploy. Entries naming different sets share nothing, which is the point.
+
+The repository and the server keep separate halves of this. The repo commits a template (`.env.example`) so the shape is reviewable; the server holds the values. Nothing merges them: boson passes the set's path and compose reads that file alone, so a key present in the template and missing from the set is missing at runtime.
+
+Checkouts live elsewhere, under `/srv`, one per branch:
+
+```
+/srv/acme/site/main/                 <- checkout: git working tree for main
+/srv/acme/site/feature-add-search/   <- checkout, created when that branch was pushed
+```
+
+A checkout directory is named by the branch's slug, the same reduction that fills `{branch}` in a hostname, so a directory listing and a URL name the same thing. Keeping the sets out of `/srv` is what makes them safe: every path under it is git's to overwrite.
 
 boson passes the chosen set's path to compose as `BOSON_ENV_FILE`, and the compose file consumes it:
 

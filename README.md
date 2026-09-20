@@ -80,7 +80,7 @@ services:
 
 That pair is the whole contract. One repo can serve several hostnames and deploy more than one branch, each to its own hostname with its own containers: [BOSON_YML.md](BOSON_YML.md) covers the format.
 
-`env: production` names a set of environment variables that lives on the server and never in the repo. You create the file after `boson add` and before the first deploy, at `/var/lib/boson/env/<org>/<name>/production`, and boson passes it to compose as `$BOSON_ENV_FILE`. Nothing is written into the checkout, so `git reset --hard` on each deploy cannot touch it, and a `--purge` cannot take it. Commit a template (`.env.example`) so the shape is in the repo and the values aren't. Different branches can name different sets, which is what keeps a preview branch off the production credentials.
+`env: production` names a file on the server: `env: <name>` maps to `/var/lib/boson/env/<org>/<name>/<name-of-set>`, so `production` means `/var/lib/boson/env/org/my-app/production`. You create it after `boson add` and before the first deploy, and boson passes its path to compose as `$BOSON_ENV_FILE`. Nothing is written into the checkout, so `git reset --hard` on each deploy cannot touch it, and a `--purge` cannot take it. Commit a template (`.env.example`) so the shape is in the repo and the values aren't. Different branches can name different sets, which is what keeps a preview branch off the production credentials.
 
 boson allocates a published port per branch and sets `BOSON_PORT` for every `docker compose` it runs. Your repo names only the port your app listens on inside the container, `8080` here, so the same repo deploys to any boson server without carrying a number that's true on one machine. A deploy whose compose file publishes some other port fails before it builds, and says which one boson expected.
 
@@ -119,13 +119,20 @@ Nothing else to pass: the repo's `_boson.yml` names the hostnames and branches, 
 
 Ctrl-C stops the progress display, not the add: complete the browser steps and the project is added anyway (`boson status` shows it). Abandon the browser instead and nothing was saved; re-run the same command to start over.
 
-`add` fetches the code but doesn't deploy, so you can set up secrets first. It reads the repo's `_boson.yml` and prints the environment sets it names, one path per set:
+`add` fetches the code but doesn't deploy, so you can set up secrets first. It reads the repo's `_boson.yml` and prints the environment sets it names, one path per set. Each filename is the value you wrote after `env:`, so the `env: production` above means a file called `production`, filled in from the template the repo committed:
 
 ```bash
 mkdir -p /var/lib/boson/env/org/my-app
-cp /srv/org/my-app/.env.example /var/lib/boson/env/org/my-app/production
-$EDITOR /var/lib/boson/env/org/my-app/production
+cd /var/lib/boson/env/org/my-app
+
+cp /srv/org/my-app/main/.env.example production   # `env: production` in _boson.yml
+nano production                                   # fill in the real values
+
+chown -R boson:boson /var/lib/boson/env
+chmod 600 production
 ```
+
+The `chown` is load-bearing: the daemon runs as `boson` and shells out to compose as `boson`, so a root-owned `0600` file gives you a deploy failure that reads like a missing file. Repeat for every set the file names, and give a staging or preview set its own values rather than copying production's, or a branch anyone can push gets your production credentials.
 
 Then `boson deploy org/my-app`. A project serving more than one branch needs `--branch <name>` to say which. The first successful deploy of a branch switches on push-to-deploy for it. A deploy whose set doesn't exist fails naming the path, so a missing secret is never a half-started container.
 
