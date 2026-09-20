@@ -88,6 +88,14 @@ Four variables reach every `docker compose` boson runs: `BOSON_PORT`, the publis
       - /var/lib/my-app/${BOSON_BRANCH_SLUG}:/data
 ```
 
+A named volume needs the same treatment, since the name is shared exactly as a path is:
+
+```yaml
+volumes:
+  data:
+    name: my-app-${BOSON_BRANCH_SLUG}
+```
+
 Secrets stay out of the working tree, so a re-clone, a `git reset --hard`, a branch teardown or a purge cannot reach them, and a repository that commits its `.env` cannot overwrite them.
 
 A named set with no file fails the deploy before the build, naming the path to create. `boson status` shows the deployment as configured but not deployable until it exists.

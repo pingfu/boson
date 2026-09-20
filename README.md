@@ -70,10 +70,12 @@ and a `docker-compose.yml` whose web-facing service publishes to loopback on `${
 services:
   web:
     build: .
-    image: my-app:${BOSON_COMMIT}             # so old builds stay deployable
+    image: my-app:${BOSON_COMMIT}                  # so old builds stay deployable
     ports:
-      - "127.0.0.1:${BOSON_PORT}:8080"        # boson's port : your app's port
-    env_file: ${BOSON_ENV_FILE}               # if your app takes env vars
+      - "127.0.0.1:${BOSON_PORT}:8080"             # boson's port : your app's port
+    env_file: ${BOSON_ENV_FILE}                    # if your app takes env vars
+    volumes:
+      - /var/lib/my-app/${BOSON_BRANCH_SLUG}:/data # if your app keeps state
 ```
 
 That pair is the whole contract. One repo can serve several hostnames and deploy more than one branch, each to its own hostname with its own containers: [BOSON_YML.md](BOSON_YML.md) covers the format.
@@ -84,12 +86,15 @@ boson allocates a published port per branch and sets `BOSON_PORT` for every `doc
 
 `BOSON_COMMIT` is the commit that deploy fetched. Tagging the image with it gives each build a name of its own instead of overwriting `latest`, which is what lets `images.keep` retain the last few and delete the rest. An app that reports its own version wants the same value.
 
-`BOSON_BRANCH_SLUG` is the branch name reduced to something safe for a hostname, a directory and a compose project, stable for the deployment's life. Any host path your compose mounts needs it, or two branches share one directory and a staging deploy writes into production's data:
+`BOSON_BRANCH_SLUG` is the branch name reduced to something safe for a hostname, a directory and a compose project, and stable for the deployment's life. Every host path your compose mounts needs it in the path. A fixed path gives every branch of the repo the same directory, so a staging deployment writes into production's database and any migration it runs arrives in production with it. Named volumes have the same problem and the same fix:
 
 ```yaml
-    volumes:
-      - /var/lib/my-app/${BOSON_BRANCH_SLUG}:/data
+volumes:
+  data:
+    name: my-app-${BOSON_BRANCH_SLUG}
 ```
+
+The deployments stay separate either way, which also means a new branch starts with empty state rather than a copy of production's.
 
 Four ports belong to the platform, and boson allocates from 30000-32767:
 
