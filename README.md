@@ -27,14 +27,14 @@ General challenges boson is avoiding:
 
 | Alternative | Cons |
 |---|---|
-| GitHub Actions +<br>SSH | ❌ Requires SSH from GitHub-hosted runners into production<br>❌ GitHub-hosted runner IP ranges are broad and not recommended as internal allowlists<br>❌ Puts deploy credentials in GitHub Actions secrets<br>❌ Leaves the real deploy behavior in a remote shell script |
-| GitHub Actions +<br>private registry | ❌ Requires registry credentials in CI<br>❌ Requires pull credentials on the server for private images<br>❌ Adds image tagging, retention and rollback conventions<br>❌ Needs a second mechanism to tell the server to pull and restart |
-| GitHub Actions +<br>message bus +<br>Watchtower | ❌ Requires a private registry and pull credentials<br>❌ Adds a message bus or queue<br>❌ Adds a long-running subscriber or polling process on the server<br>❌ Splits deploy behavior across CI, queue, subscriber, Watchtower and Docker |
-| Self-hosted Actions runner | ❌ Runs a CI executor on or near production<br>❌ Self-hosted runners are not guaranteed to be clean between jobs<br>❌ Workflow security becomes production security<br>❌ Adds runner patching, isolation and lifecycle work |
-| Dokku | ❌ Introduces a PaaS app model rather than plain Compose<br>❌ App layout and deploy behavior need to fit Dokku conventions<br>❌ More platform than a single Compose app needs |
-| CapRover | ❌ Adds dashboard-managed platform state<br>❌ Git flow is less transparent than a server-side repo checkout<br>❌ More moving parts than a small webhook deployer |
-| Coolify | ❌ CPU and resource heavy orchestration app<br>❌ More moving parts<br>❌ More platform state to debug when deploys fail |
-| Kamal | ❌ Uses SSH orchestration to reach hosts<br>❌ Registry login and image distribution are part of the normal path<br>❌ More config than a single-server Compose checkout |
+| GitHub Actions +<br>SSH | ❌ Requires SSH from GitHub-hosted runners into production<br>❌ Hosted-runner IP allowlists are broad, change often, and are not recommended<br>❌ Puts deploy credentials in GitHub Actions secrets<br>❌ Deploy behavior lives in an ad hoc SSH script on the server |
+| GitHub Actions +<br>private registry | ❌ Requires registry credentials in CI<br>❌ Requires pull credentials on the server for private images<br>❌ You must define tag naming, cleanup policy and rollback-by-tag rules<br>❌ Server still needs a webhook, runner, poller or SSH step to pull and restart |
+| GitHub Actions +<br>message bus +<br>Watchtower | ❌ Requires a private registry and pull credentials<br>❌ Requires operating a queue or bus just to deliver deploy events<br>❌ Adds a long-running subscriber or polling process on the server<br>❌ Splits deploy behavior across CI, queue, subscriber, Watchtower and Docker |
+| Self-hosted Actions runner | ❌ Runs a CI executor on or near production<br>❌ Self-hosted runners are not guaranteed to be clean between jobs<br>❌ Any workflow that can reach the runner can affect production<br>❌ Adds runner patching, isolation and lifecycle work |
+| Dokku | ❌ Introduces a PaaS app model rather than plain Compose<br>❌ App layout and deploy behavior need to fit Dokku conventions<br>❌ Adds Dokku app, plugin and release concepts for a single Compose app |
+| CapRover | ❌ Adds dashboard-managed platform state<br>❌ Deploy state is managed through CapRover's app model, not just git checkout + compose<br>❌ Adds dashboard, app definitions and platform services to operate |
+| Coolify | ❌ Runs a larger app platform stack to solve a single webhook-and-compose deploy problem<br>❌ Adds database, worker, proxy and platform services to debug<br>❌ More platform state to debug when deploys fail |
+| Kamal | ❌ Uses SSH orchestration to reach hosts<br>❌ Registry login and image distribution are part of the normal path<br>❌ Requires separate Kamal config for servers, registry, builder/proxy and accessories |
 | Hand-rolled webhook | ❌ You own HMAC verification<br>❌ You own deploy locking and idempotency<br>❌ You own logs, retries, TLS, reverse proxy config and failure handling |
 
 ## Install
