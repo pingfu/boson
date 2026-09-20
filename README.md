@@ -33,7 +33,7 @@ General challenges boson is avoiding:
 | Self-hosted Actions runner | ❌ Runs a CI executor on or near production<br>❌ Self-hosted runners are not guaranteed to be clean between jobs<br>❌ Workflow security becomes production security<br>❌ Adds runner patching, isolation and lifecycle work |
 | Dokku | ❌ Introduces a PaaS app model rather than plain Compose<br>❌ App layout and deploy behavior need to fit Dokku conventions<br>❌ More platform than a single Compose app needs |
 | CapRover | ❌ Adds dashboard-managed platform state<br>❌ Git flow is less transparent than a server-side repo checkout<br>❌ More moving parts than a small webhook deployer |
-| Coolify | ❌ Heavy for one small app: the Market Canary migration measured Coolify at ~25% steady CPU on a 1-vCPU droplet while the app itself used ~0.4%<br>❌ More services to operate than the app needs<br>❌ More platform state to debug when deploys fail |
+| Coolify | ❌ CPU and resource heavy orchestration app<br>❌ More moving parts<br>❌ More platform state to debug when deploys fail |
 | Kamal | ❌ Uses SSH orchestration to reach hosts<br>❌ Registry login and image distribution are part of the normal path<br>❌ More config than a single-server Compose checkout |
 | Hand-rolled webhook | ❌ You own HMAC verification<br>❌ You own deploy locking and idempotency<br>❌ You own logs, retries, TLS, reverse proxy config and failure handling |
 
