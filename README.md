@@ -64,7 +64,7 @@ deployments:
     env: production
 ```
 
-and a `docker-compose.yml` whose web-facing service publishes to loopback on `${BOSON_HOST_PORT}`:
+and a `docker-compose.yml` whose web-facing service publishes to loopback on `${BOSON_PORT}`:
 
 ```yaml
 services:
@@ -72,7 +72,7 @@ services:
     build: .
     image: my-app:${BOSON_COMMIT}             # so old builds stay deployable
     ports:
-      - "127.0.0.1:${BOSON_HOST_PORT}:8080"   # boson's port : your app's port
+      - "127.0.0.1:${BOSON_PORT}:8080"        # boson's port : your app's port
     env_file: ${BOSON_ENV_FILE}               # if your app takes env vars
 ```
 
@@ -80,9 +80,16 @@ That pair is the whole contract. One repo can serve several hostnames and deploy
 
 `env: production` names a set of environment variables that lives on the server and never in the repo. You create the file after `boson add` and before the first deploy, at `/var/lib/boson/env/<org>/<name>/production`, and boson passes it to compose as `$BOSON_ENV_FILE`. Nothing is written into the checkout, so `git reset --hard` on each deploy cannot touch it, and a `--purge` cannot take it. Commit a template (`.env.example`) so the shape is in the repo and the values aren't. Different branches can name different sets, which is what keeps a preview branch off the production credentials.
 
-boson picks the host port per branch, and sets `BOSON_HOST_PORT` for every `docker compose` it runs. Your repo names only the port your app listens on inside the container, `8080` here, so the same repo deploys to any boson server without carrying a number that's true on one machine. A deploy whose compose file publishes some other host port fails before it builds, and says which port boson expected.
+boson allocates a published port per branch and sets `BOSON_PORT` for every `docker compose` it runs. Your repo names only the port your app listens on inside the container, `8080` here, so the same repo deploys to any boson server without carrying a number that's true on one machine. A deploy whose compose file publishes some other port fails before it builds, and says which one boson expected.
 
 `BOSON_COMMIT` is the commit that deploy fetched. Tagging the image with it gives each build a name of its own instead of overwriting `latest`, which is what lets `images.keep` retain the last few and delete the rest. An app that reports its own version wants the same value.
+
+`BOSON_BRANCH_SLUG` is the branch name reduced to something safe for a hostname, a directory and a compose project, stable for the deployment's life. Any host path your compose mounts needs it, or two branches share one directory and a staging deploy writes into production's data:
+
+```yaml
+    volumes:
+      - /var/lib/my-app/${BOSON_BRANCH_SLUG}:/data
+```
 
 Four ports belong to the platform, and boson allocates from 30000-32767:
 
@@ -103,7 +110,7 @@ boson add org/my-app
 
 Nothing else to pass: the repo's `_boson.yml` names the hostnames and branches, and `add` clones the repo to read it.
 
-`add` prints a setup URL; open it in any browser (your own machine is fine): you create a GitHub App for the project, then install it on the repo. Boson then clones the default branch into `/srv/org/my-app/<branch>/`, creates a deployment for every branch the file names outright, allocates each one a host port, and sets up routing and certificates. `boson status` shows what it made.
+`add` prints a setup URL; open it in any browser (your own machine is fine): you create a GitHub App for the project, then install it on the repo. Boson then clones the default branch into `/srv/org/my-app/<branch>/`, creates a deployment for every branch the file names outright, allocates each one a published port, and sets up routing and certificates. `boson status` shows what it made.
 
 Ctrl-C stops the progress display, not the add: complete the browser steps and the project is added anyway (`boson status` shows it). Abandon the browser instead and nothing was saved; re-run the same command to start over.
 
@@ -158,7 +165,7 @@ Exit codes: `0` success, `1` user error, `2` runtime failure, `3` deploy already
 
 `https://deploy.example.com/_boson/health` returns the running version. When it doesn't answer, `systemctl status boson` says why.
 
-`boson status` reports the daemon's version and the admin URL, then repo, branch, hostname, host port, webhook, container states and last deploy for every deployment.
+`boson status` reports the daemon's version and the admin URL, then repo, hostname, published port, branch, webhook, container states and last deploy for every deployment, one hostname per line.
 
 For everything else, the usual tools work: `docker logs` for container output, `journalctl -u boson` for the daemon, `/var/log/boson/deploys/` for per-deploy build output.
 

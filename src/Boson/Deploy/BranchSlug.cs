@@ -4,37 +4,37 @@ using System.Text;
 namespace Boson.Deploy;
 
 /// <summary>
-/// Turns a branch name into the DNS label its hostname is built from, which
-/// its checkout directory and compose project are then named after so a
-/// listing and a URL say the same thing. Git allows nearly anything in a ref,
-/// including uppercase, unicode and `/`, while a DNS label allows `a-z0-9-`
-/// and 63 characters, so the mapping is lossy and two branches can arrive at
-/// one label. The database holds the real branch name, so this never has to be
-/// reversed, only be unique and stable.
+/// A branch name reduced to something safe to put in a hostname, a directory
+/// name and a compose project name, so all three say the same thing. The
+/// constraint is a DNS label's, the tightest of the three: `a-z0-9-` and 63
+/// characters, where git allows nearly anything in a ref, including uppercase,
+/// unicode and `/`. The mapping is therefore lossy and two branches can arrive
+/// at one slug. The database holds the real branch name, so this never has to
+/// be reversed, only be unique and stable.
 /// </summary>
-public static class DnsLabel
+public static class BranchSlug
 {
     public const int MaxLength = 63;
 
     /// <summary>Allow-list rather than escape-list: a branch name is remote input that becomes a path.</summary>
     public static string From(string branch)
     {
-        var label = new StringBuilder(branch.Length);
+        var slug = new StringBuilder(branch.Length);
 
         foreach (var c in branch.ToLowerInvariant())
         {
             if (c is >= 'a' and <= 'z' or >= '0' and <= '9')
-                label.Append(c);
-            else if (label.Length > 0 && label[^1] != '-')
-                label.Append('-');
+                slug.Append(c);
+            else if (slug.Length > 0 && slug[^1] != '-')
+                slug.Append('-');
         }
 
-        var text = label.ToString().Trim('-');
+        var text = slug.ToString().Trim('-');
 
         if (text.Length == 0) return Suffix(branch);
 
         // Truncating can collide two long branches, and so can the allow-list
-        // itself, so the hash of the true name goes on whenever the label is
+        // itself, so the hash of the true name goes on whenever the slug is
         // not already the branch it came from.
         if (text.Length > MaxLength)
             text = text[..(MaxLength - 7)].TrimEnd('-') + "-" + Suffix(branch);

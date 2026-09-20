@@ -52,12 +52,12 @@ public static class StatusCommand
 
         foreach (var d in deployments.ListActive())
         {
-            var ps = await docker.ComposePsAsync(RepoName.ComposeProjectName(d.Repo, d.DnsLabel), ct);
+            var ps = await docker.ComposePsAsync(RepoName.ComposeProjectName(d.Repo, d.BranchSlug), ct);
             var containers = ps.Ok ? SummariseComposePs(ps.StdOut) : "unavailable";
             var last = deploys.GetLatestForDeployment(d.Id);
 
             rows.Add(new DeploymentEntry(
-                d.Repo, d.Branch, d.Hostname, [.. d.AliasList], d.HostPort, d.WebhookActive,
+                d.Repo, d.Branch, d.Hostname, [.. d.AliasList], d.Port, d.WebhookActive,
                 containers,
                 last is null
                     ? null
@@ -94,7 +94,7 @@ public static class StatusCommand
 
         table.AddColumn("repo");
         table.AddColumn("hostname");
-        table.AddColumn("host port");
+        table.AddColumn("published port");
         table.AddColumn("branch");
         table.AddColumn("webhook");
         table.AddColumn("containers");
@@ -108,14 +108,14 @@ public static class StatusCommand
                   $"{Shorten(r.LastDeploy.CommitSha)} " +
                   Timestamp(r.LastDeploy.FinishedAt ?? r.LastDeploy.StartedAt, now);
 
-            var names = r.Aliases.Count == 0
-                ? r.Hostname
-                : $"{r.Hostname} (+{string.Join(", ", r.Aliases)})";
+            // One name per line: an alias is a hostname of its own, and reading
+            // a wrapped list of them in a cell is how you miss one.
+            var names = string.Join('\n', new[] { r.Hostname }.Concat(r.Aliases));
 
             table.AddRow(
                 Markup.Escape(r.Repo),
                 Markup.Escape(names),
-                r.HostPort.ToString(),
+                r.Port.ToString(),
                 Markup.Escape(r.Branch),
                 r.WebhookActive ? "active" : "inactive",
                 Markup.Escape(r.Containers),
@@ -309,7 +309,7 @@ public static class StatusCommand
 
     internal sealed record DeploymentEntry(
         string Repo, string Branch, string Hostname, IReadOnlyList<string> Aliases,
-        int HostPort, bool WebhookActive,
+        int Port, bool WebhookActive,
         string Containers, LastDeployEntry? LastDeploy, bool DeployPendingIdle);
 
     internal sealed record LastDeployEntry(

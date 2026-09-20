@@ -46,11 +46,12 @@ CREATE TABLE deployments (
 
   branch         TEXT NOT NULL,   -- the true ref name, which the label cannot
                                   -- be reversed into
-  dns_label      TEXT NOT NULL,   -- branch reduced to a DNS label: the checkout
-                                  -- directory and the compose project are named
-                                  -- after it, so both match the hostname on sight
+  branch_slug    TEXT NOT NULL,   -- branch reduced to something a hostname, a
+                                  -- directory and a compose project can all be
+                                  -- named after, so they say the same thing
   hostname       TEXT NOT NULL COLLATE NOCASE,
-  host_port      INTEGER NOT NULL CHECK (host_port BETWEEN 1 AND 65535),
+  port           INTEGER NOT NULL CHECK (port BETWEEN 1 AND 65535),  -- loopback,
+                                  -- published by Docker and dialled by Caddy
 
   env_set        TEXT,            -- null when the branch names none
   expire_after   TEXT,            -- e.g. "14d"; null keeps the deployment
@@ -69,9 +70,9 @@ CREATE TABLE deployments (
 -- Active-scoped for the same reason as the repo index: tearing a branch down
 -- archives it, and the name, port and directory have to come free.
 CREATE UNIQUE INDEX uniq_active_branch   ON deployments(project_id, branch) WHERE archived_at IS NULL;
-CREATE UNIQUE INDEX uniq_active_label    ON deployments(project_id, dns_label) WHERE archived_at IS NULL;
+CREATE UNIQUE INDEX uniq_active_slug     ON deployments(project_id, branch_slug) WHERE archived_at IS NULL;
 CREATE UNIQUE INDEX uniq_deployment_host ON deployments(hostname)           WHERE archived_at IS NULL;
-CREATE UNIQUE INDEX uniq_deployment_port ON deployments(host_port)          WHERE archived_at IS NULL;
+CREATE UNIQUE INDEX uniq_deployment_port ON deployments(port)               WHERE archived_at IS NULL;
 
 -- Every public name held by an active deployment. The canonical hostname is
 -- stored here too, so an alias cannot collide with another deployment's

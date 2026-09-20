@@ -57,7 +57,7 @@ public sealed class CaddyConfigBuilder
 
             Append(routes, ProxyRoute(
                 match: new JsonObject { ["host"] = new JsonArray(d.Hostname) },
-                dial: $"127.0.0.1:{d.HostPort}"));
+                dial: $"127.0.0.1:{d.Port}"));
         }
 
         // Last, and only after every project route: the control hostname answers

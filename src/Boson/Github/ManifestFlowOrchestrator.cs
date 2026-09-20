@@ -210,7 +210,7 @@ public sealed class ManifestFlowOrchestrator(
                 // at `main` that a repository is free to disagree with.
                 defaultBranch = await github.GetDefaultBranchAsync(entry.Repo, token.Value);
 
-                checkoutDir = paths.CheckoutDir(entry.Repo, DnsLabel.From(defaultBranch));
+                checkoutDir = paths.CheckoutDir(entry.Repo, BranchSlug.From(defaultBranch));
 
                 await git.FetchAndResetAsync(checkoutDir, entry.Repo, defaultBranch, token.Value);
             }
@@ -317,11 +317,11 @@ public sealed class ManifestFlowOrchestrator(
                 ProjectId = projectId,
                 Repo = entry.Repo,
                 Branch = declaration.Branch,
-                DnsLabel = DnsLabel.From(declaration.Branch),
+                BranchSlug = BranchSlug.From(declaration.Branch),
                 Hostname = hostname,
                 Aliases = string.Join(',', declaration.Aliases),
-                HostPort = HostPortAllocator.Allocate(
-                    deployments.ListActive().Select(d => d.HostPort), HostPortAllocator.IsFreeOnHost),
+                Port = PortAllocator.Allocate(
+                    deployments.ListActive().Select(d => d.Port), PortAllocator.IsFreeOnHost),
                 EnvSet = declaration.Env,
                 ExpireAfter = declaration.ExpireAfter,
             });

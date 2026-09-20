@@ -21,10 +21,10 @@ public class DeploymentsRepositoryTests
         Assert.Equal(inserted.Id, d.Id);
         Assert.Equal("acme/site", d.Repo);
         Assert.Equal("main", d.Branch);
-        Assert.Equal("main", d.DnsLabel);
+        Assert.Equal("main", d.BranchSlug);
         Assert.Equal("site.example.com", d.Hostname);
         Assert.Equal(["www.site.example.com"], d.AliasList);
-        Assert.Equal(30000, d.HostPort);
+        Assert.Equal(30000, d.Port);
         Assert.Equal("production", d.EnvSet);
         Assert.Equal("14d", d.ExpireAfter);
         Assert.False(d.WebhookActive);

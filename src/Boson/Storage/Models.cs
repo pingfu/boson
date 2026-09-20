@@ -35,7 +35,7 @@ public sealed record Deployment
     public required string Branch { get; init; }
 
     /// <summary>The branch as a DNS label: the checkout directory and compose project name.</summary>
-    public required string DnsLabel { get; init; }
+    public required string BranchSlug { get; init; }
 
     public required string Hostname { get; init; }
 
@@ -45,7 +45,8 @@ public sealed record Deployment
     /// </summary>
     public string Aliases { get; init; } = "";
 
-    public required int HostPort { get; init; }
+    /// <summary>The loopback port Docker publishes this deployment on, and Caddy dials.</summary>
+    public required int Port { get; init; }
     public string? EnvSet { get; init; }
     public string? ExpireAfter { get; init; }
     public bool WebhookActive { get; init; }

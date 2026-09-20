@@ -75,11 +75,18 @@ services:
     build: .
     image: my-app:${BOSON_COMMIT}
     ports:
-      - "127.0.0.1:${BOSON_HOST_PORT}:8080"
+      - "127.0.0.1:${BOSON_PORT}:8080"
     env_file: ${BOSON_ENV_FILE}
 ```
 
-Three variables reach every `docker compose` boson runs: `BOSON_HOST_PORT`, the port it allocated; `BOSON_ENV_FILE`, the path to the environment set this branch named; and `BOSON_COMMIT`, the commit the deploy just fetched.
+Four variables reach every `docker compose` boson runs: `BOSON_PORT`, the published port it allocated; `BOSON_ENV_FILE`, the path to the environment set this branch named; `BOSON_COMMIT`, the commit the deploy just fetched; and `BOSON_BRANCH_SLUG`, this branch's slug.
+
+`BOSON_BRANCH_SLUG` is what keeps two branches out of each other's data. A compose file mounting a fixed host path gives every branch the same directory, so a staging deployment writes into production's database. Put the slug in the path instead:
+
+```yaml
+    volumes:
+      - /var/lib/my-app/${BOSON_BRANCH_SLUG}:/data
+```
 
 Secrets stay out of the working tree, so a re-clone, a `git reset --hard`, a branch teardown or a purge cannot reach them, and a repository that commits its `.env` cannot overwrite them.
 

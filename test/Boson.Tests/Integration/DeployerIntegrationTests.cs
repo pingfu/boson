@@ -56,7 +56,7 @@ public sealed class DeployerIntegrationTests : IDisposable
                       web:
                         image: nginx:alpine
                         ports:
-                          - "127.0.0.1:${BOSON_HOST_PORT}:80"
+                          - "127.0.0.1:${BOSON_PORT}:80"
                     """);
             },
         };

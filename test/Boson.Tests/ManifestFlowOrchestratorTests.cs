@@ -51,7 +51,7 @@ public sealed class ManifestFlowOrchestratorTests : IDisposable
 
     private void WriteBosonFile(string yaml, string branch = "main")
     {
-        var dir = _dirs.Paths.CheckoutDir(Repo, DnsLabel.From(branch));
+        var dir = _dirs.Paths.CheckoutDir(Repo, BranchSlug.From(branch));
 
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, BosonFile.FileName), yaml);
@@ -153,7 +153,7 @@ public sealed class ManifestFlowOrchestratorTests : IDisposable
         Assert.Equal(["www.site.example.com"], deployment.AliasList);
         Assert.Equal("production", deployment.EnvSet);
         Assert.False(deployment.WebhookActive);
-        Assert.InRange(deployment.HostPort, HostPortAllocator.First, HostPortAllocator.Last);
+        Assert.InRange(deployment.Port, PortAllocator.First, PortAllocator.Last);
 
         Assert.Equal("https://site.example.com/_boson/webhook/acme/site", _github.WebhookUrlSet);
         Assert.Equal(1, _caddy.SyncCalls);
@@ -292,7 +292,7 @@ public sealed class ManifestFlowOrchestratorTests : IDisposable
         // The App's keys are issued once, so a file that does not read is a
         // push away from fixed and never a reason to throw them away.
         File.Delete(Path.Combine(
-            _dirs.Paths.CheckoutDir(Repo, DnsLabel.From("main")), BosonFile.FileName));
+            _dirs.Paths.CheckoutDir(Repo, BranchSlug.From("main")), BosonFile.FileName));
 
         var token = await RunToInstalledAsync();
 

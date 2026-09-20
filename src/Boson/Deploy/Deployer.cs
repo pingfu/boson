@@ -219,8 +219,8 @@ public sealed class Deployer(
     private async Task<Preparation> PrepareAsync(string repo, string branch, CancellationToken ct)
     {
         var existing = deployments.GetByBranch(repo, branch);
-        var label = existing?.DnsLabel ?? DnsLabel.From(branch);
-        var checkoutDir = paths.CheckoutDir(repo, label);
+        var slug = existing?.BranchSlug ?? BranchSlug.From(branch);
+        var checkoutDir = paths.CheckoutDir(repo, slug);
         var log = new List<string>();
 
         void Log(string line) => log.Add(line);
@@ -268,18 +268,18 @@ public sealed class Deployer(
                 ProjectId = projects.GetByRepo(repo)!.Id,
                 Repo = repo,
                 Branch = branch,
-                DnsLabel = label,
+                BranchSlug = slug,
                 Hostname = hostname,
                 Aliases = aliases,
-                HostPort = HostPortAllocator.Allocate(
-                    deployments.ListActive().Select(d => d.HostPort), HostPortAllocator.IsFreeOnHost),
+                Port = PortAllocator.Allocate(
+                    deployments.ListActive().Select(d => d.Port), PortAllocator.IsFreeOnHost),
                 EnvSet = entry.Env,
                 ExpireAfter = entry.ExpireAfter,
             };
 
             var id = deployments.Insert(deployment);
 
-            log.Add($"{branch} declared: {hostname} on 127.0.0.1:{deployment.HostPort}");
+            log.Add($"{branch} declared: {hostname} on 127.0.0.1:{deployment.Port}");
 
             existing = deployments.Get(id)!;
 
@@ -353,7 +353,7 @@ public sealed class Deployer(
 
             Log($"HEAD {ready.Sha}");
 
-            var composeName = RepoName.ComposeProjectName(deployment.Repo, deployment.DnsLabel);
+            var composeName = RepoName.ComposeProjectName(deployment.Repo, deployment.BranchSlug);
 
             var envSet = deployment.EnvSet ?? BosonPaths.DefaultEnvSet;
             var envFile = paths.EnvFile(deployment.Repo, envSet);
@@ -367,7 +367,8 @@ public sealed class Deployer(
                     $"{BosonFile.FileName} names env set {envSet} for {deployment.Branch}, " +
                     $"and {envFile} does not exist");
 
-            var variables = new ComposeVariables(deployment.HostPort, envFile, ready.Sha);
+            var variables = new ComposeVariables(
+                deployment.Port, envFile, ready.Sha, deployment.BranchSlug);
 
             // Before the build, not after: a compose file publishing the wrong
             // port builds perfectly and then serves nothing, and the 502 that
@@ -377,7 +378,7 @@ public sealed class Deployer(
             if (!config.Ok)
                 throw new DeployStepException($"docker compose config: {config.StdErr.Trim()}");
 
-            if (ComposePorts.Problem(config.StdOut, deployment.HostPort) is { } problem)
+            if (ComposePorts.Problem(config.StdOut, deployment.Port) is { } problem)
                 throw new DeployStepException(problem);
 
             var result = await docker.ComposeUpBuildAsync(
@@ -417,7 +418,7 @@ public sealed class Deployer(
 
         try
         {
-            var composeName = RepoName.ComposeProjectName(deployment.Repo, deployment.DnsLabel);
+            var composeName = RepoName.ComposeProjectName(deployment.Repo, deployment.BranchSlug);
 
             await docker.ComposeDownAsync(composeName, ct);
 

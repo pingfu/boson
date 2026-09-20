@@ -28,7 +28,7 @@ public sealed class DeploymentsRepository(Db db) : IDeploymentsRepository
         d.project_id AS ProjectId,
         p.repo AS Repo,
         d.branch AS Branch,
-        d.dns_label AS DnsLabel,
+        d.branch_slug AS BranchSlug,
         d.hostname AS Hostname,
         COALESCE((
             SELECT group_concat(name, ',')
@@ -38,7 +38,7 @@ public sealed class DeploymentsRepository(Db db) : IDeploymentsRepository
                 ORDER BY name
             )
         ), '') AS Aliases,
-        d.host_port AS HostPort,
+        d.port AS Port,
         d.env_set AS EnvSet,
         d.expire_after AS ExpireAfter,
         d.webhook_active AS WebhookActive,
@@ -106,9 +106,9 @@ public sealed class DeploymentsRepository(Db db) : IDeploymentsRepository
         {
             var id = conn.ExecuteScalar<long>("""
                 INSERT INTO deployments
-                  (project_id, branch, dns_label, hostname, host_port, env_set, expire_after)
+                  (project_id, branch, branch_slug, hostname, port, env_set, expire_after)
                 VALUES
-                  (@ProjectId, @Branch, @DnsLabel, @Hostname, @HostPort, @EnvSet, @ExpireAfter);
+                  (@ProjectId, @Branch, @BranchSlug, @Hostname, @Port, @EnvSet, @ExpireAfter);
                 SELECT last_insert_rowid();
                 """, deployment, tx);
 
@@ -122,7 +122,7 @@ public sealed class DeploymentsRepository(Db db) : IDeploymentsRepository
         {
             tx.Rollback();
             throw new ProjectCollisionException(
-                $"{deployment.Hostname}, aliases, host port {deployment.HostPort} or branch " +
+                $"{deployment.Hostname}, aliases, port {deployment.Port} or branch " +
                 $"{deployment.Branch} is already claimed by an active deployment");
         }
     }

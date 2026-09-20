@@ -44,7 +44,7 @@ public class DeployerTests : IDisposable
     /// <summary>A deploy reads the file the fetch left behind, so a checkout without one has nothing to deploy.</summary>
     private void WriteBosonFile(string yaml, string branch = Branch)
     {
-        var dir = _dirs.Paths.CheckoutDir(Repo, DnsLabel.From(branch));
+        var dir = _dirs.Paths.CheckoutDir(Repo, BranchSlug.From(branch));
 
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, BosonFile.FileName), yaml);
@@ -139,6 +139,16 @@ public class DeployerTests : IDisposable
     }
 
     [Fact]
+    public async Task The_branch_slug_reaches_compose_so_paths_can_vary_per_branch()
+    {
+        // Without it a compose file mounting a fixed host path gives two
+        // branches one directory, and staging writes into production's data.
+        await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
+
+        Assert.Equal(_deployment.BranchSlug, _docker.VariablesPassed[^1].BranchSlug);
+    }
+
+    [Fact]
     public async Task Failed_compose_leaves_the_deployment_inactive_with_error_recorded()
     {
         _docker.UpExitCode = 1;
@@ -156,7 +166,7 @@ public class DeployerTests : IDisposable
     public async Task A_checkout_with_no_boson_file_has_nothing_to_deploy()
     {
         File.Delete(Path.Combine(
-            _dirs.Paths.CheckoutDir(Repo, DnsLabel.From(Branch)), BosonFile.FileName));
+            _dirs.Paths.CheckoutDir(Repo, BranchSlug.From(Branch)), BosonFile.FileName));
 
         Assert.Contains($"no {BosonFile.FileName}", await FailureAsync());
         Assert.Equal(0, _docker.UpCalls);
@@ -189,7 +199,7 @@ public class DeployerTests : IDisposable
         var result = await NewDeployer().DeployAsync(Repo, "scratch", DeployTrigger.Webhook);
 
         Assert.IsType<DeployResult.NotDeclared>(result);
-        Assert.False(Directory.Exists(_dirs.Paths.CheckoutDir(Repo, DnsLabel.From("scratch"))));
+        Assert.False(Directory.Exists(_dirs.Paths.CheckoutDir(Repo, BranchSlug.From("scratch"))));
     }
 
     [Fact]
@@ -211,9 +221,9 @@ public class DeployerTests : IDisposable
 
         var created = _deployments.GetByBranch(Repo, "feature/search")!;
 
-        Assert.Equal($"{DnsLabel.From("feature/search")}.preview.example.com", created.Hostname);
+        Assert.Equal($"{BranchSlug.From("feature/search")}.preview.example.com", created.Hostname);
         Assert.Equal("7d", created.ExpireAfter);
-        Assert.NotEqual(_deployment.HostPort, created.HostPort);
+        Assert.NotEqual(_deployment.Port, created.Port);
         Assert.True(_caddy.SyncCalls > 0);
     }
 
@@ -411,7 +421,7 @@ public class DeployerTests : IDisposable
         Assert.True(_caddy.SyncCalls > 0);
 
         // The checkout stays, so a push brings the deployment back.
-        Assert.True(Directory.Exists(_dirs.Paths.CheckoutDir(Repo, _deployment.DnsLabel)));
+        Assert.True(Directory.Exists(_dirs.Paths.CheckoutDir(Repo, _deployment.BranchSlug)));
     }
 
     [Fact]

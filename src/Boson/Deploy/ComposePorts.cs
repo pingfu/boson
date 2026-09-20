@@ -11,7 +11,7 @@ namespace Boson.Deploy;
 /// </summary>
 public static class ComposePorts
 {
-    private const string HostPortVariable = ComposeVariables.HostPortVariable;
+    private const string PortVariable = ComposeVariables.PortVariable;
 
     /// <summary>The problem with what this config publishes, or null when it is right.</summary>
     public static string? Problem(string composeConfigJson, int allocatedPort)
@@ -29,7 +29,7 @@ public static class ComposePorts
 
         if (bindings.Count == 0)
             return $"no service publishes a port; boson routes to one, so publish it as " +
-                   $"\"127.0.0.1:${{{HostPortVariable}}}:<the port your app listens on>\"";
+                   $"\"127.0.0.1:${{{PortVariable}}}:<the port your app listens on>\"";
 
         foreach (var b in bindings)
         {
@@ -38,9 +38,9 @@ public static class ComposePorts
                        $"the internet with no TLS; bind it to 127.0.0.1";
 
             if (b.Published != allocatedPort)
-                return $"{b.Service} publishes host port {b.Published}, and boson allocated " +
-                       $"{allocatedPort} for this project; publish " +
-                       $"\"127.0.0.1:${{{HostPortVariable}}}:<the port your app listens on>\" " +
+                return $"{b.Service} publishes port {b.Published}, and boson allocated published " +
+                       $"port {allocatedPort} for this deployment; publish " +
+                       $"\"127.0.0.1:${{{PortVariable}}}:<the port your app listens on>\" " +
                        $"so the number comes from boson";
         }
 

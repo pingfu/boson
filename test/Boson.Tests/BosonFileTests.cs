@@ -113,7 +113,7 @@ public class BosonFileTests
         var entry = BosonFile.Parse(Valid, out _)!.Deployments[1];
 
         Assert.Equal(
-            $"{DnsLabel.From("feature/search")}.preview.example.org",
+            $"{BranchSlug.From("feature/search")}.preview.example.org",
             entry.HostnameFor("feature/search"));
     }
 

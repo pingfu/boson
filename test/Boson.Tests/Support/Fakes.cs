@@ -46,7 +46,7 @@ public sealed class FakeDockerCli : IDockerCli
           {"mode":"ingress","host_ip":"127.0.0.1","target":3000,"published":"PORT","protocol":"tcp"}
         ]}}}
         """
-        .Replace("PORT", variables.HostPort.ToString())
+        .Replace("PORT", variables.Port.ToString())
         .Replace("TAG", variables.Commit);
 
     private static ProcessResult Ok() => new(0, "", "");

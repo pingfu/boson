@@ -346,7 +346,7 @@ public sealed class DaemonHost(BosonPaths paths, int port)
             foreach (var deployment in deployments.ListActiveForRepo(repo))
             {
                 var down = await docker.ComposeDownAsync(
-                    RepoName.ComposeProjectName(repo, deployment.DnsLabel));
+                    RepoName.ComposeProjectName(repo, deployment.BranchSlug));
 
                 if (!down.Ok)
                     log.LogWarning("{Repo}#{Branch}: compose down exited {Code}: {Err}",

@@ -37,7 +37,7 @@ public class ComposePortsTests
 
         Assert.Contains("8080", problem);
         Assert.Contains("30000", problem);
-        Assert.Contains("BOSON_HOST_PORT", problem);
+        Assert.Contains("BOSON_PORT", problem);
     }
 
     [Fact]
@@ -53,7 +53,7 @@ public class ComposePortsTests
     {
         var problem = ComposePorts.Problem("""{"services":{"web":{"image":"nginx"}}}""", 30000);
 
-        Assert.Contains("BOSON_HOST_PORT", problem);
+        Assert.Contains("BOSON_PORT", problem);
     }
 
     [Fact]

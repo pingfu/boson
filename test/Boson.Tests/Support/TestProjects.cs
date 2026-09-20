@@ -36,10 +36,10 @@ public static class TestProjects
         ProjectId = projectId,
         Repo = repo,
         Branch = branch,
-        DnsLabel = DnsLabel.From(branch),
+        BranchSlug = BranchSlug.From(branch),
         Hostname = hostname,
         Aliases = aliases,
-        HostPort = port,
+        Port = port,
         EnvSet = envSet,
         ExpireAfter = expireAfter,
     };
