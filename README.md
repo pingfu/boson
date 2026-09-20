@@ -27,14 +27,14 @@ General challenges boson is avoiding:
 
 | Alternative | Pros | Cons |
 |---|---|---|
-| GitHub Actions + SSH | Common; simple; logs in GitHub; flexible | ❌ Requires SSH path from GitHub to prod; ❌ GitHub does not recommend using standard hosted-runner IP ranges as internal allowlists; ❌ secrets in GitHub; deploy depends on remote shell script |
-| GitHub Actions + private registry | Prod pulls exact CI-built image; easier rollback by tag; build logs in GitHub | ❌ Registry credentials; ❌ image/tag management; ❌ extra service dependency; private pulls still need server-side auth and a trigger to restart |
-| GitHub Actions + message bus + Watchtower | No inbound SSH from GitHub; CI can publish a small deploy notification; the server reacts from inside the private network | ❌ Still needs a private registry and pull credentials; ❌ adds a message bus, subscriber and custom glue script; deploy logic is split across CI, queue and server |
-| Self-hosted Actions runner | No inbound SSH from GitHub; uses GitHub Actions workflow model; can access private network | ❌ CI executor near/on prod; workflow security matters a lot; runner maintenance |
-| Dokku | Mature single-server PaaS; git-push deploys; routing/certs/plugins included | ❌ Opinionated; more platform than plain Compose; app must fit Dokku model |
-| CapRover | Friendly UI; handles apps/routes/certs; good for multiple small services | ❌ Heavier than boson; more platform state; less transparent Git flow |
-| Coolify | Feature-rich; Git integrations; UI; manages services/databases | ❌ Heavy for one small app: the Market Canary migration measured Coolify at ~25% steady CPU on a 1-vCPU droplet while the app itself used ~0.4%; more moving parts |
-| Kamal | Image-based deploys over SSH; good rollback/deploy discipline; increasingly common | ❌ SSH orchestration; usually wants a registry; more config than boson |
+| GitHub Actions + SSH | Common; simple; logs in GitHub; flexible | ❌ Requires SSH path from GitHub to prod<br>❌ GitHub does not recommend using standard hosted-runner IP ranges as internal allowlists<br>❌ Secrets in GitHub<br>❌ Deploy depends on remote shell script |
+| GitHub Actions + private registry | Prod pulls exact CI-built image; easier rollback by tag; build logs in GitHub | ❌ Registry credentials<br>❌ Image/tag management<br>❌ Extra service dependency<br>❌ Private pulls still need server-side auth and a trigger to restart |
+| GitHub Actions + message bus + Watchtower | No inbound SSH from GitHub; CI can publish a small deploy notification; the server reacts from inside the private network | ❌ Still needs a private registry and pull credentials<br>❌ Adds a message bus, subscriber and custom glue script<br>❌ Deploy logic is split across CI, queue and server |
+| Self-hosted Actions runner | No inbound SSH from GitHub; uses GitHub Actions workflow model; can access private network | ❌ CI executor near/on prod<br>❌ Workflow security matters a lot<br>❌ Runner maintenance |
+| Dokku | Mature single-server PaaS; git-push deploys; routing/certs/plugins included | ❌ Opinionated<br>❌ More platform than plain Compose<br>❌ App must fit Dokku model |
+| CapRover | Friendly UI; handles apps/routes/certs; good for multiple small services | ❌ Heavier than boson<br>❌ More platform state<br>❌ Less transparent Git flow |
+| Coolify | Feature-rich; Git integrations; UI; manages services/databases | ❌ CPU and resource heavy orchestration app<br>❌ More moving parts |
+| Kamal | Image-based deploys over SSH; good rollback/deploy discipline; increasingly common | ❌ SSH orchestration<br>❌ Usually wants a registry<br>❌ More config than boson |
 | Hand-rolled webhook | No SSH from GitHub; no registry; maximum control | ❌ You own HMAC verification, locking, logs, retries, TLS, idempotency and failure handling |
 
 ## Install
