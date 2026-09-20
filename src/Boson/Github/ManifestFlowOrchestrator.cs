@@ -253,7 +253,8 @@ public sealed class ManifestFlowOrchestrator(
                 entry.Warnings.Add(
                     $"{BosonFile.FileName} names no branch outright, so the App's webhook address " +
                     $"is still {platform.Get(PlatformRepository.AdminHostname)}, which GitHub may not " +
-                    "reach. Declare a branch and re-run boson add, or set the address by hand");
+                    "reach. Set the address by hand, or remove and add the project again after " +
+                    "declaring one branch outright");
 
                 logger.LogWarning(
                     "{Repo}: no deployment to carry the webhook address; it stays on the control plane",

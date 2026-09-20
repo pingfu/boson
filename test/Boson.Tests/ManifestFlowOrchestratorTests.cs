@@ -219,6 +219,8 @@ public sealed class ManifestFlowOrchestratorTests : IDisposable
         Assert.Null(_github.WebhookUrlSet);
         Assert.Contains(_orchestrator.GetStatus(token)!.Warnings,
             w => w.Contains("webhook address is still deploy.example.com"));
+        Assert.Contains(_orchestrator.GetStatus(token)!.Warnings,
+            w => w.Contains("remove and add the project again"));
     }
 
     [Fact]
