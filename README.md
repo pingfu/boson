@@ -8,9 +8,7 @@ Per project it takes one input: the repo. What it serves is in the repo's own `_
 
 ![Your CI pipeline stays; boson absorbs the image registry, deploy step, reverse proxy and TLS renewal that would otherwise sit between a merge and a live container.](assets/boson-architecture-light.svg)
 
-Boson is for the small-server deployment shape where you want a GitHub push to update a private Docker Compose app, but you do not want GitHub Actions to SSH into production, do not want to maintain GitHub-hosted runner IP allowlists, do not want to run a registry, and do not want a self-hosted CI runner sitting on the box.
-
-Boson keeps the deploy path server-side and webhook-driven:
+GitHub tells your server about the push. Boson captures that, fetches the code, builds it and publishes the containers:
 
 ```text
 GitHub push webhook -> boson -> git fetch/reset -> docker compose up -d --build
@@ -21,6 +19,37 @@ GitHub push webhook -> boson -> git fetch/reset -> docker compose up -d --build
 3. **Run `boson add <org/name>` to connect your server to GitHub and fetch your private repo.**
 4. **Set up your project secrets** in `/var/lib/boson/env/<org>/<name>/...` for each container runtime environment.
 5. **Use `boson deploy <org/name>` to build and run** your project's containers.
+
+## What it does for you
+
+- Deploys on push. No registry, no CI deploy step, no SSH into production.
+- Gives every deployment a hostname with TLS.
+- Deploys any branch to its own hostname, and removes it when it goes idle.
+- Keeps the old container running when a build fails.
+
+## What it costs you
+
+- Your app is a Compose file and a Dockerfile.
+- The build runs on the production server.
+- One server. Boson takes ports 80 and 443, and needs root.
+- Each deploy restarts the container, so the app is down for as long as it takes to start.
+- Code lives on GitHub.
+
+## Where it fits
+
+A server running a few apps, with push-to-deploy and branch previews, and no credentials for production anywhere but on it.
+
+Scaling means a bigger server. GitHub posts each project's webhook to one hostname, and that hostname is one box. Two servers are two independent bosons with nothing coordinating them. When an app needs more than one server, move to Kamal, a managed platform or Kubernetes, and take the Compose file with you.
+
+The same trade elsewhere:
+
+| | Does for you | Costs you |
+|---|---|---|
+| **boson** | Push to deploy, hostname and TLS, branch previews | One server, the build on it, a short outage per deploy |
+| **Kubernetes** | Many servers, rolling deploys, self-healing, scaling | A cluster, a registry, manifests, a CI pipeline |
+| **Kamal** | Many servers, zero-downtime deploys | A registry, SSH into production from wherever you deploy |
+| **Coolify, CapRover, Dokku** | A dashboard, databases and add-ons | Their app model instead of plain Compose, and their platform to run |
+| **GitHub Actions + SSH** | Anything a script can do | Production credentials in CI, hosted runners reaching production |
 
 General challenges boson is avoiding:
 
