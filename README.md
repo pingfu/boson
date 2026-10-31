@@ -7,15 +7,16 @@ Boson runs on your production host and automatically clones your GitHub repos an
 ## Boson might be for you if
 
 - **Repo is on GitHub.** A push webhook triggers each Boson deployment.
-- **Container publishes app on a single port.** Caddy proxies to it.
-- **You can add `_boson.yml` to the repo.** Maps deopyed branches to hostnames.
-- **One server.** GitHub webhooks post to one hostname per repo.
+- **You can add `_boson.yml` to the repo.** Maps deployed branches to hostnames.
+- **A public hostname pointing at the server.** GitHub posts webhooks & Let's Encrypt validates there.
 - **Ports 80 and 443 free.** Boson manages Caddy.
+- **Container publishes app on a single port.** Caddy proxies to it.
+- **One server.** GitHub webhooks post to one hostname per repo.
 - **Outages during deployment.** Boson restarts the containers.
-- **DNS pointing at the server.** For TLS and the webhook.
+- **App data in a Docker volume.** Every deploy wipes the last checkout.
 - **Secrets can be stored on the server.** Under `/var/lib/boson/env/`.
-- **Nobody else has a shell.** Boson stores its GitHub credentials .
-- **Images in public registries, or built on the server.** Private registries needs a one-off `docker login`.
+- **Images in public registries, or built on the server.** Private registries need a one-off `docker login`.
+- **Nobody else has a shell.** Boson stores its GitHub credentials unencrypted.
 
 ![Your CI pipeline stays; boson absorbs the image registry, deploy step, reverse proxy and TLS renewal that would otherwise sit between a merge and a live container.](assets/boson-architecture-light.svg)
 
