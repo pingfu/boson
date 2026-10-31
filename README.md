@@ -4,7 +4,18 @@ Push-to-deploy for a single Linux server.
 
 Boson runs on your production host and automatically clones your GitHub repos and runs each one with `docker compose up -d --build`, routes a public hostname to each with automatic TLS using Caddy, and redeploys on every push.
 
-Per project it takes one input: the repo. What it serves is in the repo's own `_boson.yml`.
+## Boson might be for you if
+
+- **Repo is on GitHub.** A push webhook triggers each Boson deployment.
+- **Container publishes app on a single port.** Caddy proxies to it.
+- **You can add `_boson.yml` to the repo.** Maps deopyed branches to hostnames.
+- **One server.** GitHub webhooks post to one hostname per repo.
+- **Ports 80 and 443 free.** Boson manages Caddy.
+- **Outages during deployment.** Boson restarts the containers.
+- **DNS pointing at the server.** For TLS and the webhook.
+- **Secrets can be stored on the server.** Under `/var/lib/boson/env/`.
+- **Nobody else has a shell.** Boson stores its GitHub credentials .
+- **Images in public registries, or built on the server.** Private registries needs a one-off `docker login`.
 
 ![Your CI pipeline stays; boson absorbs the image registry, deploy step, reverse proxy and TLS renewal that would otherwise sit between a merge and a live container.](assets/boson-architecture-light.svg)
 
@@ -26,14 +37,6 @@ GitHub push webhook -> boson -> git fetch/reset -> docker compose up -d --build
 - Gives every deployment a hostname with TLS.
 - Deploys any branch to its own hostname, and removes it when it goes idle.
 - Keeps the old container running when a build fails.
-
-## What it costs you
-
-- Your app is a Compose file and a Dockerfile.
-- The build runs on the production server.
-- One server. Boson takes ports 80 and 443, and needs root.
-- Each deploy restarts the container, so the app is down for as long as it takes to start.
-- Code lives on GitHub.
 
 ## Where it fits
 
