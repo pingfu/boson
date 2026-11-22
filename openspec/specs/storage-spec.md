@@ -52,7 +52,12 @@ The system SHALL enforce, among rows whose `archived_at` is null: one project pe
 [bug] Both repositories report every SQLite constraint failure this way, so a NOT NULL, CHECK or foreign key failure is also reported as "already added" or "already claimed".
 
 ### Requirement: Archiving
-The system SHALL archive a project or deployment by setting `archived_at`, keeping the row and its deploy history. Archiving a deployment deletes its `deployment_names` rows.
+The system SHALL archive a project or deployment by setting `archived_at`, keeping the row and its deploy history. Archiving a deployment deletes its `deployment_names` rows. Archiving a project sets its `github_webhook_secret` and `github_app_pem` to the empty string, and the daemon does the same at start for any archived row that still holds them.
+
+#### Scenario: Archived project's credentials
+- WHEN a project is archived
+- THEN its row holds no webhook secret and no private key
+
 
 #### Scenario: Archived deployment's names
 - WHEN a deployment is archived
@@ -67,8 +72,6 @@ The system SHALL delete every `projects` row for a purged repository, active and
 
 ### Requirement: Migrations
 The system SHALL embed migrations as `NNNN_<name>.sql` and apply, at daemon start, each whose number is above the database's version, in order, each in its own transaction together with its `schema_version` row. The CLI does not migrate.
-
-[bug] `0002_app_org.sql` adds `github_app_org` as a second migration. `AGENTS.md` says a schema change rewrites `0001_init.sql`. The same rule excepts credentials GitHub issues once, and a migration is what kept the existing `projects` rows, so this may be the exception applied.
 
 #### Scenario: Fresh database
 - WHEN the daemon starts with no database file
@@ -101,9 +104,11 @@ A CLI command run as root that opens the database SHALL set the owner of `boson.
 - THEN the files are owned by `boson:boson` when the command ends
 
 ### Requirement: Credentials at rest
-GitHub App private keys and webhook secrets are stored as plain text. `/var/lib/boson` is mode `0700` and owned by `boson`. A backup of the database contains every project's credentials.
+GitHub App private keys and webhook secrets of active projects are stored as plain text. `/var/lib/boson` is mode `0700` and owned by `boson`. The system SHALL set `boson.db`, `boson.db-wal` and `boson.db-shm` to mode `0600` when the daemon starts and whenever a root-run CLI command resets their ownership. A backup of the database contains every active project's credentials.
 
-[bug] The comment in `0001_init.sql` says the database file is `0600`. No code sets the file's mode. The `0700` directory is what protects it.
+#### Scenario: Database created under a permissive umask
+- WHEN the daemon starts and `boson.db` is group or world readable
+- THEN the file is mode `0600` before any listener accepts a request
 
 #### Scenario: Backing up
 - WHEN the operator copies `/var/lib/boson` with the daemon stopped, or takes the database with `VACUUM INTO`

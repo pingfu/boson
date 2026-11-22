@@ -51,21 +51,27 @@ public static class ComposeImages
     }
 
     /// <summary>
-    /// The tags to delete: everything but the newest <paramref name="keep"/>,
-    /// and never the one just deployed. `docker images` lists newest first.
+    /// The commits whose images this deployment may delete: its own, older
+    /// than its newest <paramref name="keep"/>, and not one that another
+    /// deployment keeps. Each of the others arrives already cut down to what
+    /// its own `images.keep` says, since two branches can declare different
+    /// numbers. A torn-down deployment keeps none of its own.
+    ///
+    /// Worked out from deploy history rather than from the tags on disk. Two
+    /// branches building one image name share its tags, and a tag does not say
+    /// which branch built it, so counting tags lets a preview branch's deploys
+    /// delete the images production would roll back to.
     /// </summary>
-    public static List<string> Stale(IReadOnlyList<string> tagsNewestFirst, string keepTag, int keep)
+    public static HashSet<string> Removable(
+        IEnumerable<string> ownCommitsNewestFirst,
+        int keep,
+        IEnumerable<IEnumerable<string>> keptByOthers)
     {
-        var kept = 0;
-        var stale = new List<string>();
+        var removable = ownCommitsNewestFirst.Distinct().Skip(keep).ToHashSet();
 
-        foreach (var tag in tagsNewestFirst)
-        {
-            if (tag == keepTag || tag == "<none>") continue;
+        foreach (var kept in keptByOthers)
+            removable.ExceptWith(kept);
 
-            if (++kept >= keep) stale.Add(tag);
-        }
-
-        return stale;
+        return removable;
     }
 }

@@ -24,13 +24,13 @@ The system SHALL run `docker compose --project-name <name> down` for every activ
 [bug] Removal takes no deployment lock. A deploy in flight runs `docker compose up` after the `down`, leaving containers running for a deployment that is archived or deleted.
 
 ### Requirement: Archive
-Without `--purge`, the system SHALL archive the project row, keep its deploy history and leave `/srv/<org>/<name>` in place. An archived repository can be added again.
+Without `--purge`, the system SHALL archive the project row, blank its webhook secret and private key, keep its deploy history and leave `/srv/<org>/<name>` in place. An archived repository can be added again, which creates a new GitHub App.
 
 #### Scenario: Remove then add
 - WHEN a project is removed and `boson add` is run for the same repository
 - THEN the add is accepted
 
-[bug] An archived project cannot be purged afterwards: `boson remove --purge` answers `unknown project`. Its row, with the App's private key and webhook secret, stays until the repository is added again and that project is purged.
+[bug] An archived project cannot be purged afterwards: `boson remove --purge` answers `unknown project`. Its row and deploy history stay until the repository is added again and that project is purged.
 
 ### Requirement: Purge
 With `--purge`, the system SHALL delete every project row for the repository, active and archived, which cascades to their deployments and deploy rows, and delete `/srv/<org>/<name>`. Deploy log files under `/var/log/boson/deploys/` remain.

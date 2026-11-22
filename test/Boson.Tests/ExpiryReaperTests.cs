@@ -49,9 +49,28 @@ public sealed class ExpiryReaperTests : IDisposable
     [InlineData("0d")]
     [InlineData("-3d")]
     [InlineData("7w")]
+    [InlineData("+3d")]
+    [InlineData("3 d")]
+    [InlineData("99999999d")]
+    [InlineData("2147483647h")]
     public void Anything_else_is_ignored_rather_than_guessed_at(string? text)
     {
         Assert.Null(ExpiryReaper.ParseDuration(text));
+    }
+
+    [Fact]
+    public async Task A_deployment_that_cannot_be_swept_does_not_shield_the_ones_after_it()
+    {
+        var first = TestProjects.Insert(_projects, _deployments, expireAfter: "7d");
+        var second = TestProjects.Insert(
+            _projects, _deployments, branch: "zeta", hostname: "zeta.example.com", port: 30001, expireAfter: "7d");
+
+        _deployer.TearDownThrowsFor = first.Id;
+        _clock.Now += TimeSpan.FromDays(8);
+
+        await NewReaper().SweepAsync();
+
+        Assert.Equal(second.Id, Assert.Single(_deployer.TearDowns).Id);
     }
 
     [Fact]

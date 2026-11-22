@@ -4,26 +4,55 @@ namespace Boson.Deploy;
 
 public interface IImageRetainer
 {
+    /// <summary>
+    /// <paramref name="removable"/> is the commits whose images may go, as
+    /// <see cref="ComposeImages.Removable"/> works them out.
+    /// </summary>
     Task PruneAsync(
-        string composeConfigJson, string tag, int keep, Action<string> log, CancellationToken ct);
+        string composeConfigJson, string tag, IReadOnlySet<string> removable, int keep,
+        Action<string> log, CancellationToken ct);
+
+    /// <summary>
+    /// For a deployment that has been torn down: its containers are gone, so
+    /// the image of <paramref name="tag"/> goes too when it is removable.
+    /// </summary>
+    Task RemoveAsync(
+        string composeConfigJson, string tag, IReadOnlySet<string> removable,
+        Action<string> log, CancellationToken ct);
 }
 
 public sealed class ImageRetainer(IDockerCli docker) : IImageRetainer
 {
     /// <summary>
-    /// Keeps the last few Boson-built tags for each image this deployment
-    /// produces. Other tags on the same image name may be release labels or
-    /// operator rollback markers, so retention leaves them alone.
+    /// Removes the images of commits this deployment no longer keeps, for each
+    /// image it builds. Any other tag on the same image name is left alone: a
+    /// release label, an operator's rollback marker, or another branch's build.
     /// </summary>
-    public async Task PruneAsync(
-        string composeConfigJson, string tag, int keep, Action<string> log, CancellationToken ct)
+    public Task PruneAsync(
+        string composeConfigJson, string tag, IReadOnlySet<string> removable, int keep,
+        Action<string> log, CancellationToken ct) =>
+        RemoveTagsAsync(composeConfigJson, tag, removable, keep, log, ct);
+
+    public Task RemoveAsync(
+        string composeConfigJson, string tag, IReadOnlySet<string> removable,
+        Action<string> log, CancellationToken ct) =>
+        RemoveTagsAsync(composeConfigJson, tag, removable, keep: null, log, ct);
+
+    /// <param name="keep">
+    /// Null once the deployment is torn down: nothing runs from the image of
+    /// <paramref name="tag"/> any more, and there is no retention to explain.
+    /// </param>
+    private async Task RemoveTagsAsync(
+        string composeConfigJson, string tag, IReadOnlySet<string> removable, int? keep,
+        Action<string> log, CancellationToken ct)
     {
         foreach (var image in ComposeImages.Read(composeConfigJson))
         {
             if (image.Tag != tag)
             {
-                log($"image retention: {image.Service} builds {image.Reference}, " +
-                    $"so nothing is retained; tag it :${ComposeVariables.CommitVariable} to keep the last {keep}");
+                if (keep is not null)
+                    log($"image retention: {image.Service} builds {image.Reference}, " +
+                        $"so nothing is retained; tag it :${ComposeVariables.CommitVariable} to keep the last {keep}");
                 continue;
             }
 
@@ -35,18 +64,19 @@ public sealed class ImageRetainer(IDockerCli docker) : IImageRetainer
                 continue;
             }
 
-            var listed = tags.StdOut
+            var stale = tags.StdOut
                 .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Where(IsFullShaTag)
+                .Where(listed => IsFullShaTag(listed) && removable.Contains(listed))
+                .Where(listed => keep is null || listed != tag)
                 .ToList();
 
-            foreach (var stale in ComposeImages.Stale(listed, tag, keep))
+            foreach (var old in stale)
             {
-                var removed = await docker.ImageRemoveAsync($"{image.Name}:{stale}", ct);
+                var removed = await docker.ImageRemoveAsync($"{image.Name}:{old}", ct);
 
                 log(removed.Ok
-                    ? $"removed {image.Name}:{stale}"
-                    : $"image retention: {image.Name}:{stale}: {removed.StdErr.Trim()}");
+                    ? $"removed {image.Name}:{old}"
+                    : $"image retention: {image.Name}:{old}: {removed.StdErr.Trim()}");
             }
         }
     }

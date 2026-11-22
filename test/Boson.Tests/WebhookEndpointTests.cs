@@ -147,6 +147,23 @@ public sealed class WebhookEndpointTests : IAsyncLifetime
         Assert.Empty(_deployer.Calls);
     }
 
+    [Theory]
+    [InlineData("create")]
+    [InlineData("delete")]
+    [InlineData("workflow_run")]
+    [InlineData("")]
+    public async Task An_event_that_is_not_a_push_is_200_ignored_even_with_a_branch_ref(string eventName)
+    {
+        // An App's owner can subscribe it to more than push, and a payload
+        // with a `ref` under refs/heads/ is not thereby a push.
+        Activate();
+        var response = await PostAsync(Url, PushBody(), eventName: eventName);
+
+        Assert.Equal(200, (int)response.StatusCode);
+        Assert.Contains("ignored", await response.Content.ReadAsStringAsync());
+        Assert.Empty(_deployer.Calls);
+    }
+
     [Fact]
     public async Task A_branch_with_no_deployment_reaches_the_deployer_to_be_discovered()
     {

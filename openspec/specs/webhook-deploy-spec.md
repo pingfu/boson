@@ -15,12 +15,13 @@ The system SHALL validate each delivery in this order and answer at the first st
 | 2 | No active project for the repository in the path | 404 |
 | 3 | `X-Hub-Signature-256` does not verify | 403 |
 | 4 | `X-GitHub-Event` is `ping` | 200 `{"status":"pong"}` |
-| 5 | Body is not JSON with a string `ref` | 400 |
-| 6 | `ref` does not start with `refs/heads/` | 200 `{"status":"ignored"}` |
-| 7 | The branch's deployment has not been activated | 200 `{"status":"inactive"}`, or 202 `{"status":"queued"}` when its first deploy is running |
-| 8 | Otherwise | 202 `{"status":"queued"}` |
+| 5 | `X-GitHub-Event` is anything but `push`, or is absent | 200 `{"status":"ignored"}` |
+| 6 | Body is not JSON with a string `ref` | 400 |
+| 7 | `ref` does not start with `refs/heads/` | 200 `{"status":"ignored"}` |
+| 8 | The branch's deployment has not been activated | 200 `{"status":"inactive"}`, or 202 `{"status":"queued"}` when its first deploy is running |
+| 9 | Otherwise | 202 `{"status":"queued"}` |
 
-The repository in the path is lowercased before lookup. Any signed event other than `ping` whose body has a branch `ref` is treated as a push. A 403 means the signature failed. A 200 or 202 means it verified. A 202 means a deploy was queued, and its outcome is in `boson status` and the deploy log.
+The repository in the path is lowercased before lookup. A 403 means the signature failed. A 200 or 202 means it verified. A 202 means a deploy was queued, and its outcome is in `boson status` and the deploy log.
 
 #### Scenario: Push to a deployed branch
 - WHEN a signed push to `refs/heads/main` arrives for a project whose `main` deployment is active
@@ -28,6 +29,10 @@ The repository in the path is lowercased before lookup. Any signed event other t
 
 #### Scenario: Tag push
 - WHEN a signed push to `refs/tags/v1` arrives
+- THEN the response is 200 `{"status":"ignored"}` and nothing is deployed
+
+#### Scenario: Another event with a branch ref
+- WHEN a signed `create` or `delete` event arrives whose body has `ref` under `refs/heads/`
 - THEN the response is 200 `{"status":"ignored"}` and nothing is deployed
 
 #### Scenario: Removed project

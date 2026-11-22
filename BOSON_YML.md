@@ -36,8 +36,8 @@ Each entry answers one question: this branch, on this hostname. An entry naming 
 | `branch` | yes | A branch name, or a glob (`*`, `feature/*`) |
 | `hostname` | yes | The name this deployment serves. Supports `{branch}` |
 | `aliases` | no | Names that 308 to `hostname` |
-| `env` | no | Environment set to run with |
-| `expire_after` | no | Idle time after which the deployment is stopped |
+| `env` | no | Environment set to run with: a file name of letters, digits, `.`, `_` and `-` |
+| `expire_after` | no | Idle time after which the deployment is stopped: a whole number followed by `d`, `h` or `m`, such as `14d` |
 
 Entries are matched top to bottom and the first match wins, so `main` listed above `"*"` gets its own hostname rather than a generated one. Reordering the file is how matching changes.
 
@@ -130,7 +130,7 @@ Pattern entries name a different set from production, or they hand every branch 
 
 ## Images
 
-`images.keep` is how many builds of each image to retain, counting the one just built. Tagging with `${BOSON_COMMIT}` is what makes retention possible: each build gets a name of its own instead of overwriting `latest`, so the last few commits stay deployable without a rebuild and everything older is removed after a successful deploy.
+`images.keep` is how many of a deployment's commits keep their images, counting the one just deployed. Tagging with `${BOSON_COMMIT}` is what makes retention possible: each build gets a name of its own instead of overwriting `latest`, so the last few commits stay deployable without a rebuild, and after a successful deploy the images of that deployment's older commits are removed. Branches that build the same image name each keep their own: a commit one branch still keeps is left alone by the others.
 
 Retention only touches images a deploy tagged with the commit it built. A service running an image someone else published is left alone.
 
@@ -138,7 +138,7 @@ Retention only touches images a deploy tagged with the commit it built. A servic
 
 A push deploys the branch it names, if an entry matches it.
 
-`expire_after` measures from the last successful deploy, so an active branch never expires, and a branch whose recent deploys all failed is not kept alive by them. The daemon sweeps every fifteen minutes. On expiry the containers stop and the hostname and port are released, while the checkout stays: a later push redeploys the branch rather than starting from nothing.
+`expire_after` measures from the last successful deploy, so an active branch never expires, and a branch whose recent deploys all failed is not kept alive by them. The daemon sweeps every fifteen minutes. On expiry the containers stop, the hostname and port are released and the images the deployment built are removed, while the checkout stays: a later push redeploys the branch rather than starting from nothing.
 
 An expired deployment leaves `boson status`, since it holds nothing any more. What stopped it is in `journalctl -u boson`.
 
@@ -154,7 +154,9 @@ The file is read after fetch and before build, alongside the check on what compo
 - an entry omits `branch` or `hostname`
 - two entries claim the same hostname, or the name belongs to another active deployment
 - a `{branch}` hostname collides with one another deployment of the same repository generated
-- `env` names a set that does not exist on the host
+- `env` names a set that does not exist on the host, or is not a plain file name
+- `expire_after` is not a number followed by `d`, `h` or `m`
+- a hostname or alias is boson's control hostname
 - no entry matches the branch a deploy was asked for
 
 A push to a branch no entry matches deploys nothing, which is not an error: a repository decides which of its branches are deployed.

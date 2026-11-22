@@ -133,7 +133,7 @@ The system SHALL allocate each new deployment the lowest port from 30000 to 3276
 - WHEN every port in the range is held or in use
 - THEN allocation fails with `no free port between 30000 and 32767`
 
-[bug] Allocation is not serialised across branches. Two new branches deploying at once can be given the same port, and the second insert fails on the port's uniqueness.
+[bug] Allocation is not serialised across branches. Two new branches deploying at once can be given the same port. The second is refused as a failed deploy and succeeds on its next push.
 
 ### Requirement: Compose project name
 The system SHALL pass `--project-name` on every `docker compose` invocation for a deployment. The name is `<org>/<name>-<slug>`, lowercased, with every character outside `a-z`, `0-9`, `_` and `-` replaced by `-`.
@@ -169,7 +169,17 @@ The system SHALL write one log file per deploy, containing a header naming the d
 ### Requirement: Recording failures
 The system SHALL record a failure against the deployment when one exists, as a deploy row with status `failed` and a log file. A failure for a branch with no deployment is written to the daemon log.
 
-[bug] This holds for a failed token mint or fetch, a missing or invalid file, and a missing entry. Every other failure in step 4 throws out of the deploy with no deploy row and no log file, even when the deployment exists: port exhaustion, a name or port collision, a failed Caddy synchronisation, and the parser crash noted in [boson-file](boson-file-spec.md). A webhook deploy leaves `webhook deploy task crashed` in the daemon log. `boson deploy` prints `deploy request failed (500)` and exits 2. After a failed Caddy synchronisation the stored values already match the file, so the next deploy skips the synchronisation and succeeds while Caddy still routes the old state.
+
+This covers every failure in steps 1 to 4: a failed token mint or fetch, a missing, unreadable or invalid file, a missing entry, a name another deployment serves, no free port, and a failed Caddy synchronisation.
+
+#### Scenario: Caddy refuses a changed route
+- WHEN the Caddy synchronisation fails after a deployment's declared values were updated
+- THEN the stored values are put back and the deploy fails with `caddy did not take the change to <hostname>: <reason>`
+- AND the next deploy applies the change and synchronises again
+
+#### Scenario: Caddy refuses a new deployment's route
+- WHEN the Caddy synchronisation fails after a new deployment was created
+- THEN the deployment is archived, the reason is logged, and the next push creates it again
 
 #### Scenario: Fetch fails for an existing deployment
 - WHEN the fetch fails for a branch that has a deployment

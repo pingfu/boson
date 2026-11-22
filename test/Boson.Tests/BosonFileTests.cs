@@ -134,6 +134,83 @@ public class BosonFileTests
         Assert.Contains(expected, problem);
     }
 
+    private static string WithEntryLine(string line) =>
+        $"version: 1\ndeployments:\n  - branch: main\n    hostname: a.example.org\n    {line}";
+
+    [Theory]
+    [InlineData("../other/production")]
+    [InlineData("/etc/passwd")]
+    [InlineData("nested/production")]
+    [InlineData("nested\\\\production")]
+    [InlineData("..")]
+    [InlineData(".hidden")]
+    [InlineData("\"\"")]
+    [InlineData("\"with space\"")]
+    public void An_env_that_is_not_a_plain_file_name_is_refused(string env)
+    {
+        // The name is joined onto the project's own environment directory, so
+        // one that climbs out of it reads another project's secrets.
+        Assert.Null(BosonFile.Parse(WithEntryLine($"env: {env}"), out var problem));
+        Assert.Contains("an environment set is a file name", problem);
+    }
+
+    [Theory]
+    [InlineData("production")]
+    [InlineData("preview-2")]
+    [InlineData("eu_west.prod")]
+    public void A_plain_file_name_is_an_env(string env)
+    {
+        Assert.Equal(env, BosonFile.Parse(WithEntryLine($"env: {env}"), out _)!.Deployments[0].Env);
+    }
+
+    [Theory]
+    [InlineData("2w")]
+    [InlineData("soon")]
+    [InlineData("14")]
+    [InlineData("0d")]
+    [InlineData("-3d")]
+    [InlineData("99999999d")]
+    public void An_expiry_boson_cannot_read_is_refused_rather_than_ignored(string expireAfter)
+    {
+        // Ignored, a typo is a deployment that never expires and never says so.
+        Assert.Null(BosonFile.Parse(WithEntryLine($"expire_after: {expireAfter}"), out var problem));
+        Assert.Contains($"expire_after for main is \"{expireAfter}\"", problem);
+    }
+
+    [Theory]
+    [InlineData("version: 1\ndeployments:\n", "no deployments")]
+    [InlineData("version: 1\ndeployments:\n  -\n", "empty entry")]
+    [InlineData("version: 1\ndeployments:\n  - branch: main\n    hostname: a.example.org\n    aliases: [~]", "empty alias")]
+    public void A_key_with_nothing_after_it_is_a_problem_with_words_not_a_null_reference(
+        string yaml, string expected)
+    {
+        Assert.Null(BosonFile.Parse(yaml, out var problem));
+        Assert.Contains(expected, problem);
+    }
+
+    [Theory]
+    [InlineData("aliases:")]
+    [InlineData("env:")]
+    [InlineData("expire_after:")]
+    public void An_optional_key_left_empty_is_the_same_as_leaving_it_out(string line)
+    {
+        var file = BosonFile.Parse(WithEntryLine(line), out var problem);
+
+        Assert.Null(problem);
+        Assert.Empty(file!.Deployments[0].Aliases);
+        Assert.Null(file.Deployments[0].Env);
+        Assert.Null(file.Deployments[0].ExpireAfter);
+    }
+
+    [Fact]
+    public void Images_left_empty_keeps_the_default()
+    {
+        var file = BosonFile.Parse(WithEntryLine("aliases: []") + "\nimages:\n", out var problem);
+
+        Assert.Null(problem);
+        Assert.Equal(3, file!.Images.Keep);
+    }
+
     [Fact]
     public void Unparseable_yaml_carries_the_parser_message()
     {

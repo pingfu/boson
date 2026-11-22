@@ -69,10 +69,30 @@ public sealed class ProjectsRepository(Db db) : IProjectsRepository
     public void Archive(string repo)
     {
         using var conn = db.Open();
+        // The secret and the key go with it. A re-add creates a new App, so an
+        // archived row's credentials are never read again, and keeping them
+        // would leave a working key for a repository in every backup.
         conn.Execute("""
-            UPDATE projects SET archived_at = datetime('now'), updated_at = datetime('now')
+            UPDATE projects
+            SET archived_at = datetime('now'), updated_at = datetime('now'),
+                github_webhook_secret = '', github_app_pem = ''
             WHERE repo = @repo AND archived_at IS NULL
             """, new { repo });
+    }
+
+    /// <summary>
+    /// Blanks the credentials of rows archived before archiving did so itself.
+    /// Returns how many rows it changed.
+    /// </summary>
+    public int ClearArchivedCredentials()
+    {
+        using var conn = db.Open();
+        return conn.Execute("""
+            UPDATE projects
+            SET github_webhook_secret = '', github_app_pem = '', updated_at = datetime('now')
+            WHERE archived_at IS NOT NULL
+              AND (github_webhook_secret <> '' OR github_app_pem <> '')
+            """);
     }
 
     public void Purge(string repo)

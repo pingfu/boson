@@ -48,25 +48,47 @@ public sealed class ExpiryReaper(
 
         foreach (var deployment in deployments.ListActive())
         {
-            if (ParseDuration(deployment.ExpireAfter) is not { } window) continue;
-
-            // Measured from the last deploy that worked: a deployment whose
-            // recent deploys all failed is still one somebody is using.
-            var last = deploys.GetLastSucceededForDeployment(deployment.Id);
-            var since = DbTime.Parse(last?.FinishedAt ?? last?.StartedAt)
-                        ?? DbTime.Parse(deployment.CreatedAt);
-
-            if (since is null || now - since.Value < window) continue;
-
-            logger.LogInformation(
-                "{Repo}#{Branch}: idle for {Window}; stopping it",
-                deployment.Repo, deployment.Branch, deployment.ExpireAfter);
-
-            await deployer.TearDownAsync(deployment, ct);
+            try
+            {
+                await SweepOneAsync(deployment, now, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception e)
+            {
+                // One deployment that cannot be swept must not shield every
+                // deployment listed after it from expiring.
+                logger.LogError(e, "{Repo}#{Branch}: expiry sweep failed", deployment.Repo, deployment.Branch);
+            }
         }
     }
 
-    /// <summary>`14d`, `36h`, `90m`. Anything else is ignored rather than guessed at.</summary>
+    private async Task SweepOneAsync(Deployment deployment, DateTimeOffset now, CancellationToken ct)
+    {
+        if (ParseDuration(deployment.ExpireAfter) is not { } window) return;
+
+        // Measured from the last deploy that worked: a deployment whose
+        // recent deploys all failed is still one somebody is using.
+        var last = deploys.GetLastSucceededForDeployment(deployment.Id);
+        var since = DbTime.Parse(last?.FinishedAt ?? last?.StartedAt)
+                    ?? DbTime.Parse(deployment.CreatedAt);
+
+        if (since is null || now - since.Value < window) return;
+
+        logger.LogInformation(
+            "{Repo}#{Branch}: idle for {Window}; stopping it",
+            deployment.Repo, deployment.Branch, deployment.ExpireAfter);
+
+        await deployer.TearDownAsync(deployment, ct);
+    }
+
+    /// <summary>
+    /// `14d`, `36h`, `90m`. Null for anything else, including a number too
+    /// large to be a time span, which `_boson.yml` validation turns into an
+    /// error naming the value.
+    /// </summary>
     internal static TimeSpan? ParseDuration(string? text)
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
@@ -75,14 +97,23 @@ public sealed class ExpiryReaper(
         var unit = value[^1];
         var digits = value[..^1];
 
+        // Digits alone: int.TryParse would also take a sign and whitespace.
+        if (digits.Length == 0 || !digits.All(char.IsAsciiDigit)) return null;
         if (!int.TryParse(digits, out var amount) || amount <= 0) return null;
 
-        return unit switch
+        try
         {
-            'd' or 'D' => TimeSpan.FromDays(amount),
-            'h' or 'H' => TimeSpan.FromHours(amount),
-            'm' or 'M' => TimeSpan.FromMinutes(amount),
-            _ => null,
-        };
+            return unit switch
+            {
+                'd' or 'D' => TimeSpan.FromDays(amount),
+                'h' or 'H' => TimeSpan.FromHours(amount),
+                'm' or 'M' => TimeSpan.FromMinutes(amount),
+                _ => null,
+            };
+        }
+        catch (Exception e) when (e is OverflowException or ArgumentOutOfRangeException)
+        {
+            return null;
+        }
     }
 }

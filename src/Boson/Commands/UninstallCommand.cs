@@ -29,6 +29,53 @@ public static class UninstallCommand
         return cmd;
     }
 
+    /// <summary>
+    /// VACUUM INTO, not a file copy: the DB is WAL-mode with the daemon
+    /// potentially still writing, and `cp` can capture a torn snapshot. This
+    /// is the last chance to keep the App credentials, which GitHub will not
+    /// re-issue.
+    ///
+    /// Written inside boson's own 0700 directory and closed to everyone but
+    /// its owner before it is moved to where the operator asked: SQLite
+    /// creates the file with whatever the umask allows, and the destination
+    /// is usually a directory other users can read.
+    /// </summary>
+    internal static void WriteBackup(Db db, string stagingDir, string backupPath)
+    {
+        backupPath = Path.GetFullPath(backupPath);
+
+        if (File.Exists(backupPath) || Directory.Exists(backupPath))
+            throw new IOException("that path already exists");
+
+        Directory.CreateDirectory(stagingDir);
+
+        var staged = Path.Combine(stagingDir, $"backup-{Guid.NewGuid():N}.db");
+
+        try
+        {
+            using (var conn = db.Open())
+                conn.Execute("VACUUM INTO @staged", new { staged });
+
+            Restrict(staged);
+
+            File.Move(staged, backupPath);
+
+            // Again at the destination: a move across filesystems is a copy,
+            // and this does not rely on the copy carrying the mode over.
+            Restrict(backupPath);
+        }
+        finally
+        {
+            if (File.Exists(staged)) File.Delete(staged);
+        }
+    }
+
+    private static void Restrict(string path)
+    {
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+    }
+
     public static async Task<int> RunAsync(bool force, bool purge, CancellationToken ct)
     {
         var paths = new BosonPaths();
@@ -100,13 +147,18 @@ public static class UninstallCommand
                 
                 if (!string.IsNullOrEmpty(backupPath))
                 {
-                    // VACUUM INTO, not a file copy: the DB is WAL-mode with the
-                    // daemon potentially still writing, and `cp` can capture a
-                    // torn snapshot. This is the last chance to keep the App
-                    // credentials, which GitHub will not re-issue.
-                    using var conn = db.Open();
-                    conn.Execute("VACUUM INTO @backupPath", new { backupPath });
-                    Console.WriteLine($"✓ backup written to {backupPath}");
+                    try
+                    {
+                        WriteBackup(db, paths.TmpDir, backupPath);
+                    }
+                    catch (Exception e)
+                    {
+                        Console.Error.WriteLine($"could not write the backup to {backupPath}: {e.Message}");
+                        Console.Error.WriteLine("aborted; nothing was changed");
+                        return ExitCodes.RuntimeFailure;
+                    }
+
+                    Console.WriteLine($"✓ backup written to {backupPath} (mode 0600: it holds every project's App key)");
                 }
             }
         }

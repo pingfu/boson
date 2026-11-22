@@ -47,7 +47,7 @@ The system SHALL print one row per active deployment, ordered by repository then
 | containers | Container states with counts, sorted by state, such as `restarting(1), running(2)`. `docker compose ps` is run without `--all`, so stopped containers are not counted |
 | last deploy | `#<id> <status> <sha, 7 characters> <timestamp> (<age>)`, or `never` |
 
-[bug] `BOSON_YML.md` says `boson status` reports why a deploy failed (invalid file, missing environment set). The table shows `failed` with no reason. The reason is in `--json` and the deploy log. Failures that write no deploy row, listed in [deploy](deploy-spec.md), do not appear at all.
+[bug] `BOSON_YML.md` says `boson status` reports why a deploy failed (invalid file, missing environment set). The table shows `failed` with no reason. The reason is in `--json` and the deploy log. A failure for a branch that has no deployment yet writes no deploy row and does not appear.
 
 #### Scenario: No deployments
 - WHEN no active deployment exists

@@ -466,6 +466,45 @@ public sealed class ManifestFlowOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task A_file_that_claims_the_control_hostname_declares_nothing()
+    {
+        // Routed, the name would serve this repository's app on every path
+        // outside /_boson/*.
+        WriteBosonFile("""
+            version: 1
+            deployments:
+              - branch: main
+                hostname: site.example.com
+              - branch: "preview/*"
+                hostname: "{branch}.example.com"
+                aliases: [Deploy.Example.com]
+            """);
+
+        var token = await RunToInstalledAsync();
+        var status = _orchestrator.GetStatus(token)!;
+
+        Assert.Equal("fetch_failed", status.Phase);
+        Assert.Contains("deploy.example.com is boson's control hostname", status.Error);
+        Assert.NotNull(_projects.GetByRepo(Repo));
+        Assert.Empty(_deployments.ListActiveForRepo(Repo));
+    }
+
+    [Fact]
+    public async Task A_hostname_another_project_serves_stops_the_declaration_naming_who_has_it()
+    {
+        TestProjects.Insert(_projects, _deployments, repo: "acme/other", hostname: "site.example.com");
+
+        var token = await RunToInstalledAsync();
+        var status = _orchestrator.GetStatus(token)!;
+
+        // Fixed with a push, so the project and its App are kept.
+        Assert.Equal("fetch_failed", status.Phase);
+        Assert.Contains("site.example.com is already served by acme/other branch main", status.Error);
+        Assert.NotNull(_projects.GetByRepo(Repo));
+        Assert.Empty(_deployments.ListActiveForRepo(Repo));
+    }
+
+    [Fact]
     public async Task Failed_conversion_marks_the_flow_failed_and_persists_nothing()
     {
         _github.FailConversion = true;

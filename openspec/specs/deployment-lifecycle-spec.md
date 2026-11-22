@@ -17,18 +17,24 @@ The system SHALL sweep every active deployment every 15 minutes while the daemon
 - WHEN a sweep fails with an error
 - THEN the error is logged and the next sweep runs 15 minutes later
 
+#### Scenario: One deployment cannot be swept
+- WHEN sweeping or tearing down one deployment throws
+- THEN the error is logged against that deployment and the sweep continues with the next
+
 ### Requirement: Duration format
-The system SHALL read `expire_after` as a positive integer followed by `d` (days), `h` (hours) or `m` (minutes), in either case. A deployment with no value, or a value in any other form, does not expire.
+The system SHALL read `expire_after` as a positive whole number, digits alone, followed by `d` (days), `h` (hours) or `m` (minutes), in either case. A deployment with no value does not expire. [boson-file](boson-file-spec.md) validation rejects a value in any other form, or one too large to be a time span.
 
 #### Scenario: Hours
 - WHEN `expire_after` is `36h`
 - THEN the window is 36 hours
 
 #### Scenario: Unreadable value
-- WHEN `expire_after` is `2w`
-- THEN the deployment does not expire
+- WHEN an entry declares `expire_after: 2w`
+- THEN the file fails validation and the deploy fails before it builds
 
-[bug] `expire_after` is not validated when the file is read, and a number too large for a time span, such as `99999999d`, throws during the sweep. Each sweep then stops at that deployment, and no deployment after it in repository and branch order expires. Read from the code, not run.
+#### Scenario: Unreadable value already stored
+- WHEN a deployment's stored `expire_after` cannot be read
+- THEN the sweep leaves that deployment running
 
 ### Requirement: Idle time
 The system SHALL measure idle time from the finish of the deployment's last successful deploy, or from the deployment's creation when none has succeeded.
@@ -54,22 +60,43 @@ The system SHALL tear a deployment down by running `docker compose --project-nam
 
 [bug] When the expired deployment's hostname carries the App's webhook address, Caddy stops routing that hostname at teardown, so GitHub cannot deliver pushes for any branch of the project. If it was the project's last deployment, `boson deploy <org/name>` declares again and resets the address. Otherwise the address has to be moved by hand.
 
-[bug] Teardown ignores the result of `docker compose down` and archives regardless. A failed Caddy synchronisation leaves the deployment archived and still routed, and ends that sweep.
+[bug] Teardown ignores the result of `docker compose down` and archives regardless. A failed Caddy synchronisation leaves the deployment archived and still routed.
 
 #### Scenario: Status after expiry
 - WHEN a deployment has expired
 - THEN `boson status` no longer lists it
 
 ### Requirement: Image retention
-After a successful deploy, the system SHALL keep the newest `images.keep` commit-tagged builds of each image the deployment builds, counting the one just deployed, and remove the older ones with `docker image rm`.
+After a successful deploy, the system SHALL keep the images of the deployment's newest `images.keep` successfully deployed commits, counting the one just deployed, and remove the images of its older commits with `docker image rm`. A commit that another active deployment keeps is left alone. What another deployment keeps is its own newest commits, counted by the `images.keep` in its own checkout's `_boson.yml`, or by the deploying branch's value when that file cannot be read.
 
-Retention applies to a service that has both `build` and `image` in the resolved compose configuration and whose image tag is the deployed commit's SHA. Among the image's existing tags, those that are 40 hex characters are candidates for removal. Newest is the order `docker images` lists them in.
+The commits come from the deployment's deploy history, each counted once. Retention applies to a service that has both `build` and `image` in the resolved compose configuration and whose image tag is the deployed commit's SHA. A tag is removed when it is on disk, is 40 hex characters, and names one of the removable commits.
 
-[bug] Retention counts per image name. Branches that build the same `my-app:${BOSON_COMMIT}` share one allowance of `images.keep`, so a preview branch's deploys remove the tags another branch's deployment would roll back to.
-
-#### Scenario: Fourth build with keep 3
-- WHEN `images.keep` is 3 and a fourth commit deploys an image tagged `my-app:${BOSON_COMMIT}`
+#### Scenario: Fourth commit with keep 3
+- WHEN `images.keep` is 3 and a deployment's fourth commit deploys an image tagged `my-app:${BOSON_COMMIT}`
 - THEN the tag of the oldest of the four commits is removed and the log records `removed my-app:<sha>`
+
+#### Scenario: Two branches building one image name
+- WHEN `main` and a preview branch both build `my-app:${BOSON_COMMIT}` and the preview branch deploys
+- THEN the tags of commits `main` deployed are left alone, unless the preview branch deployed the same commit and neither keeps it
+
+#### Scenario: Branches that keep different numbers
+- WHEN `main` declares `images.keep: 5`, a preview branch declares `images.keep: 3`, and the preview branch deploys
+- THEN none of `main`'s newest five commits is removed
+
+### Requirement: Images removed at teardown
+After tearing a deployment down, the system SHALL remove the images of every commit it successfully deployed, for each image its compose file builds, leaving any commit another active deployment keeps, as defined under Image retention. The image names are read from the checkout teardown leaves behind. A failure here is logged and leaves the teardown complete.
+
+#### Scenario: Expired preview branch
+- WHEN a preview deployment that built `my-app:${BOSON_COMMIT}` for three commits expires
+- THEN the three tags are removed and the daemon log records each
+
+#### Scenario: Commit shared with another branch
+- WHEN the expired deployment's newest commit is also what `main` is running
+- THEN that tag is left alone
+
+#### Scenario: Compose file cannot be resolved
+- WHEN the checkout is missing, or `docker compose config` fails in it
+- THEN the images are left in place, the reason is logged, and the deployment stays torn down
 
 #### Scenario: Image not tagged with the commit
 - WHEN a built service's image tag is not the deployed commit

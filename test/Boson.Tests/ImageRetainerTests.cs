@@ -16,18 +16,18 @@ public class ImageRetainerTests
     private static string Config(string reference) =>
         """{"services":{"web":{"build":{},"image":"REFERENCE"}}}""".Replace("REFERENCE", reference);
 
-    private Task PruneAsync(string tag, int keep = 3) =>
+    /// <summary>Which commits may go is ComposeImages.Removable's decision; here it is handed in.</summary>
+    private Task PruneAsync(string tag, params string[] removable) =>
         new ImageRetainer(_docker).PruneAsync(
-            Config($"{Image}:{tag}"), tag, keep, _log.Add, CancellationToken.None);
+            Config($"{Image}:{tag}"), tag, removable.ToHashSet(), 3, _log.Add, CancellationToken.None);
 
     [Fact]
-    public async Task The_newest_builds_are_kept_and_older_ones_removed()
+    public async Task The_commits_it_is_told_may_go_are_removed()
     {
         _docker.ImageTags[Image] = [Sha(4), Sha(3), Sha(2), Sha(1)];
 
-        await PruneAsync(Sha(4));
+        await PruneAsync(Sha(4), Sha(1));
 
-        // keep: 3 counts the build just made, so two older ones stay.
         Assert.Equal([$"{Image}:{Sha(1)}"], _docker.ImagesRemoved);
     }
 
@@ -36,21 +36,43 @@ public class ImageRetainerTests
     {
         _docker.ImageTags[Image] = [Sha(2), Sha(1)];
 
-        await PruneAsync(Sha(2), keep: 1);
+        await PruneAsync(Sha(2), Sha(2), Sha(1));
 
-        Assert.DoesNotContain($"{Image}:{Sha(2)}", _docker.ImagesRemoved);
+        Assert.Equal([$"{Image}:{Sha(1)}"], _docker.ImagesRemoved);
     }
 
     [Fact]
-    public async Task Tags_that_are_not_commits_are_left_alone()
+    public async Task A_torn_down_deployments_last_build_goes_with_the_rest()
     {
-        // A release label or a rollback marker an operator put there, which
-        // boson has no business deleting.
-        _docker.ImageTags[Image] = [Sha(3), "stable", "v1.2.3", "latest", Sha(2), Sha(1)];
+        _docker.ImageTags[Image] = [Sha(2), Sha(1), "stable"];
 
-        await PruneAsync(Sha(3), keep: 1);
+        await new ImageRetainer(_docker).RemoveAsync(
+            Config($"{Image}:{Sha(2)}"), Sha(2), new HashSet<string> { Sha(2), Sha(1) },
+            _log.Add, CancellationToken.None);
 
         Assert.Equal([$"{Image}:{Sha(2)}", $"{Image}:{Sha(1)}"], _docker.ImagesRemoved);
+    }
+
+    [Fact]
+    public async Task A_commit_with_no_image_on_disk_is_not_asked_for()
+    {
+        _docker.ImageTags[Image] = [Sha(2)];
+
+        await PruneAsync(Sha(2), Sha(1));
+
+        Assert.Empty(_docker.ImagesRemoved);
+    }
+
+    [Fact]
+    public async Task Tags_it_was_not_told_about_are_left_alone()
+    {
+        // A release label, a rollback marker an operator put there, or a
+        // commit another branch built, none of which are this deploy's.
+        _docker.ImageTags[Image] = [Sha(3), "stable", "v1.2.3", "latest", Sha(2), Sha(1)];
+
+        await PruneAsync(Sha(3), Sha(1), "stable");
+
+        Assert.Equal([$"{Image}:{Sha(1)}"], _docker.ImagesRemoved);
     }
 
     [Fact]
@@ -59,7 +81,7 @@ public class ImageRetainerTests
         // Silence would read as retention working, while every build quietly
         // leaves another untagged image on disk.
         await new ImageRetainer(_docker).PruneAsync(
-            Config("someone/else:v1"), Sha(1), 3, _log.Add, CancellationToken.None);
+            Config("someone/else:v1"), Sha(1), new HashSet<string>(), 3, _log.Add, CancellationToken.None);
 
         Assert.Empty(_docker.ImagesRemoved);
         Assert.Contains(_log, line => line.Contains("BOSON_COMMIT"));
@@ -83,7 +105,7 @@ public class ImageRetainerTests
         _docker.ImageTags[Image] = [Sha(3), Sha(2), Sha(1)];
         _docker.ImageRemoveExitCode = 1;
 
-        await PruneAsync(Sha(3), keep: 1);
+        await PruneAsync(Sha(3), Sha(2), Sha(1));
 
         Assert.Equal(2, _docker.ImagesRemoved.Count);
         Assert.Contains(_log, line => line.Contains("image retention"));

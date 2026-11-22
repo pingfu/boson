@@ -7,13 +7,15 @@ An environment set is a file of environment values kept on the host, outside the
 ## Requirements
 
 ### Requirement: Location
-The system SHALL resolve an environment set named `<set>` for repository `<org>/<name>` to `/var/lib/boson/env/<org>/<name>/<set>`. Entries naming the same set share the file.
+The system SHALL resolve an environment set named `<set>` for repository `<org>/<name>` to `/var/lib/boson/env/<org>/<name>/<set>`. Entries naming the same set share the file. A set name is a file name: letters, digits, `.`, `_` and `-`, not starting with `.`. [boson-file](boson-file-spec.md) validation rejects any other value, so a repository cannot name a path outside its own directory.
 
 #### Scenario: Two entries, one set
 - WHEN the entries for `"*"` and `feature/*` both declare `env: preview`
 - THEN every deployment they produce reads `/var/lib/boson/env/<org>/<name>/preview`
 
-[bug] `env` is joined to the directory unchecked. A value such as `../other/production`, or an absolute path, resolves outside the project's directory, so a repository can name another project's set.
+#### Scenario: Name that climbs out of the directory
+- WHEN an entry declares `env: ../other/production`
+- THEN the file fails validation and nothing is deployed
 
 ### Requirement: Named set must exist
 The system SHALL fail a deploy before running compose when the deployment names an environment set whose file does not exist, with an error naming the set, the branch and the path.

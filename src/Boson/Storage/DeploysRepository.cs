@@ -15,6 +15,10 @@ public interface IDeploysRepository
     DeployRow? GetLatestForDeployment(long deploymentId);
     DeployRow? GetLastSucceededForDeployment(long deploymentId);
     IReadOnlyList<DeployRow> ListForDeployment(long deploymentId);
+
+    /// <summary>The commits a deployment has successfully deployed, newest first, each once.</summary>
+    IReadOnlyList<string> ListSucceededCommits(long deploymentId);
+
     /// <summary>
     /// Startup recovery: a 'running' row without a live daemon task
     /// can only be a crash orphan, because the daemon is the sole deploy executor.
@@ -116,6 +120,18 @@ public sealed class DeploysRepository(Db db) : IDeploysRepository
         return conn.Query<DeployRow>(
             $"SELECT {Columns} FROM deploys WHERE deployment_id = @deploymentId ORDER BY id",
             new { deploymentId }).ToList();
+    }
+
+    public IReadOnlyList<string> ListSucceededCommits(long deploymentId)
+    {
+        using var conn = db.Open();
+
+        return conn.Query<string>(
+            """
+            SELECT commit_sha FROM deploys
+            WHERE deployment_id = @deploymentId AND status = 'succeeded' AND commit_sha IS NOT NULL
+            ORDER BY id DESC
+            """, new { deploymentId }).Distinct().ToList();
     }
 
     public int MarkAllRunningAsFailed(string error)

@@ -49,20 +49,34 @@ public class ComposeImagesTests
     [InlineData(1, new[] { "old1", "old2", "old3" })]
     public void Retention_counts_the_build_just_made(int keep, string[] expected)
     {
-        var stale = ComposeImages.Stale(["new", "old1", "old2", "old3"], "new", keep);
+        var removable = ComposeImages.Removable(["new", "old1", "old2", "old3"], keep, []);
 
-        Assert.Equal(expected, stale);
+        Assert.Equal(expected, removable.Order());
     }
 
     [Fact]
-    public void The_tag_just_deployed_is_never_stale()
+    public void A_commit_deployed_twice_counts_once()
     {
-        Assert.DoesNotContain("new", ComposeImages.Stale(["old1", "new"], "new", keep: 1));
+        // A redeploy of the same commit is one image, not two of the allowance.
+        var removable = ComposeImages.Removable(["new", "new", "old1", "old2"], keep: 2, []);
+
+        Assert.Equal(["old2"], removable);
     }
 
     [Fact]
-    public void Untagged_leftovers_are_left_to_dangling_image_cleanup()
+    public void A_commit_another_deployment_keeps_is_not_removable()
     {
-        Assert.DoesNotContain("<none>", ComposeImages.Stale(["new", "<none>", "old1"], "new", keep: 1));
+        var removable = ComposeImages.Removable(
+            ["new", "old1", "old2", "old3"], keep: 1, [["old3"], ["old2"]]);
+
+        Assert.Equal(["old1"], removable);
+    }
+
+    [Fact]
+    public void A_torn_down_deployment_keeps_none_of_its_own()
+    {
+        var removable = ComposeImages.Removable(["new", "old1"], keep: 0, [["old1"]]);
+
+        Assert.Equal(["new"], removable);
     }
 }

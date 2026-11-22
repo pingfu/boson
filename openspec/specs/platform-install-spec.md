@@ -54,9 +54,12 @@ The system SHALL create the system user `boson` when it does not exist, with no 
 - THEN the command prints the tool's error and exits 2
 
 ### Requirement: Directories
-The system SHALL create `/var/lib/boson`, `/var/lib/boson/locks`, `/var/lib/boson/tmp`, `/var/log/boson`, `/var/log/boson/deploys` and `/srv`, and SHALL set `/var/lib/boson`, `/var/log/boson` and `/srv` to owner `boson:boson` recursively and mode `0700`.
+The system SHALL create `/var/lib/boson`, `/var/lib/boson/locks`, `/var/lib/boson/tmp`, `/var/log/boson`, `/var/log/boson/deploys` and `/srv`, and SHALL set `/var/lib/boson`, `/var/log/boson` and `/srv` to owner `boson:boson` recursively and mode `0700`. A `chown` or `chmod` that fails SHALL stop the command.
 
-[bug] The results of `chown` and `chmod` are discarded, and `✓ directories in place` prints whether or not they worked.
+#### Scenario: Mode cannot be set
+- WHEN `chown` or `chmod` exits non-zero for a directory
+- THEN the command prints the directory, the command that failed and its exit code, every line the tool reported, the usual causes with the command that shows each, and that re-running is safe
+- AND exits 2 without touching the daemon
 
 #### Scenario: Directories exist from an earlier install
 - WHEN the directories already exist and are owned by a different uid

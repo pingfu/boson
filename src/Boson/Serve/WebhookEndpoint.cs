@@ -79,6 +79,17 @@ public static class WebhookEndpoint
                 return Ack("pong");
             }
 
+            // The App subscribes to push alone, but its owner can tick other
+            // events in GitHub's settings, and several of them carry a `ref`
+            // that would otherwise read as a push to that branch.
+            var eventName = ctx.Request.Headers["X-GitHub-Event"].ToString();
+
+            if (eventName != "push")
+            {
+                Log(logger, repo, 200, $"ignored event {(eventName.Length == 0 ? "(none)" : eventName)}");
+                return Ack("ignored");
+            }
+
             // 5 — body parses as a push event with a ref. Parsed only after the
             // signature verified attacker-controllable input.
             string? gitRef = null;

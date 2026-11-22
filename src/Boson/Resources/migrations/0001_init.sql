@@ -22,11 +22,17 @@ CREATE TABLE projects (
   -- the row is inserted whole or not at all, and its existence means the
   -- project is fully added. Losing them means re-running `boson add` and
   -- deleting the orphaned App by hand. Stored in plaintext; the DB is 0600.
+  -- Archiving a project blanks the secret and the key: a re-add creates a new
+  -- App, so nothing reads an archived row's credentials again.
   github_app_id          INTEGER NOT NULL,
   github_app_slug        TEXT    NOT NULL,
   github_installation_id INTEGER NOT NULL,
   github_webhook_secret  TEXT    NOT NULL,
   github_app_pem         TEXT    NOT NULL,
+
+  -- The organisation the App was created under, which is where its settings
+  -- page lives. Null is a personal account's App.
+  github_app_org         TEXT,
 
   created_at       TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at       TEXT NOT NULL DEFAULT (datetime('now')),

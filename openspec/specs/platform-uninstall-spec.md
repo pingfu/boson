@@ -40,9 +40,13 @@ With `--purge`, the system SHALL ask the operator to type `destroy` before anyth
 
 #### Scenario: Backup requested
 - WHEN the operator confirms and enters a backup path
-- THEN the database is written to that path with `VACUUM INTO` before teardown begins
+- THEN the database is written with `VACUUM INTO` to a file in `/var/lib/boson/tmp`, set to mode `0600`, and moved to that path before teardown begins
+- AND the file at that path is mode `0600`
 
-[bug] The backup is written as root with the default umask, outside the `0700` data directory, and holds every project's credentials. A path that already exists makes `VACUUM INTO` fail, and the command exits 1 with a stack trace.
+#### Scenario: Backup cannot be written
+- WHEN the path already exists, or writing or moving the backup fails
+- THEN the command prints `could not write the backup to <path>: <reason>` and `aborted; nothing was changed`, and exits 2
+- AND an existing file at that path is left as it was
 
 #### Scenario: Backup skipped
 - WHEN the operator confirms and enters an empty path

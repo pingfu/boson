@@ -39,7 +39,11 @@ public sealed class DaemonHost(BosonPaths paths, int port)
 
         migrator.MigrateToLatest();
 
+        DbOwnership.RestrictMode(paths.DbPath);
+
         var projects = new ProjectsRepository(db);
+
+        var cleared = projects.ClearArchivedCredentials();
         var deployments = new DeploymentsRepository(db);
         var platform = new PlatformRepository(db);
         var deploys = new DeploysRepository(db);
@@ -69,6 +73,9 @@ public sealed class DaemonHost(BosonPaths paths, int port)
 
         var log = loggerFactory.CreateLogger("boson");
 
+        if (cleared > 0)
+            log.LogInformation("cleared the GitHub App credentials of {Count} archived project(s)", cleared);
+
         var runner = new ProcessRunner();
         var git = new GitCli(runner);
         var docker = new DockerCli(runner);
@@ -79,7 +86,7 @@ public sealed class DaemonHost(BosonPaths paths, int port)
         var caddy = new CaddySynchroniser(new CaddyConfigBuilder(), new CaddyAdminClient(), deployments, platform);
         var imageRetainer = new ImageRetainer(docker);
         var deployer = new Deployer(
-            projects, deployments, deploys, minter, git, docker, imageRetainer, caddy, locks, paths, log);
+            projects, deployments, deploys, platform, minter, git, docker, imageRetainer, caddy, locks, paths, log);
         var orchestrator = new ManifestFlowOrchestrator(
             projects, deployments, platform, caddy, git, minter, github, dns, paths, TimeProvider.System, log);
         var reaper = new ExpiryReaper(deployments, deploys, deployer, TimeProvider.System, log);

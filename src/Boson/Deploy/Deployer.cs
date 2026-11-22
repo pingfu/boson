@@ -47,6 +47,7 @@ public sealed class Deployer(
     IProjectsRepository projects,
     IDeploymentsRepository deployments,
     IDeploysRepository deploys,
+    IPlatformRepository platform,
     IInstallationTokenMinter minter,
     IGitCli git,
     IDockerCli docker,
@@ -238,7 +239,21 @@ public sealed class Deployer(
             return Stop(existing, $"fetch: {e.Message}", log);
         }
 
-        var file = BosonFile.Find(checkoutDir, out var problem);
+        BosonFile? file;
+        string? problem;
+
+        // Everything from here to the end of preparation that can go wrong is
+        // turned into a failed deploy with its reason. Thrown instead, it
+        // leaves the task crashed: no deploy row, no log, nothing in `boson
+        // status`, and a bare 500 for whoever ran `boson deploy`.
+        try
+        {
+            file = BosonFile.Find(checkoutDir, out problem);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            return Stop(existing, $"{BosonFile.FileName} could not be read: {e.Message}", log);
+        }
 
         if (file is null)
             return Stop(existing, problem ?? $"no {BosonFile.FileName} at the root of {repo}", log);
@@ -258,48 +273,126 @@ public sealed class Deployer(
             return Stop(existing, $"{BosonFile.FileName} no longer declares {branch}", log);
         }
 
+        // The whole file first, so a name any entry spells out is refused on
+        // whichever branch deploys next. What a pattern generates for this
+        // branch is the one name that cannot be known before the branch is.
+        var control = platform.Get(PlatformRepository.AdminHostname);
+
+        if ((file.ControlHostnameProblem(control) ?? entry.ControlHostnameProblem(branch, control)) is { } reserved)
+            return Stop(existing, reserved, log);
+
         var hostname = entry.HostnameFor(branch);
         var aliases = string.Join(',', entry.Aliases);
 
+        // Asked before the database is, because the database can only say
+        // that some constraint failed, and the operator needs to know which
+        // name is taken and what has it.
+        if (ClaimedElsewhere(deployments.ListActive(), existing?.Id, entry.Aliases.Append(hostname)) is { } taken)
+            return Stop(existing, taken, log);
+
         if (existing is null)
         {
-            var deployment = new Deployment
+            Deployment created;
+
+            try
             {
-                ProjectId = projects.GetByRepo(repo)!.Id,
-                Repo = repo,
-                Branch = branch,
-                BranchSlug = slug,
-                Hostname = hostname,
-                Aliases = aliases,
-                Port = PortAllocator.Allocate(
-                    deployments.ListActive().Select(d => d.Port), PortAllocator.IsFreeOnHost),
-                EnvSet = entry.Env,
-                ExpireAfter = entry.ExpireAfter,
-            };
+                var id = deployments.Insert(new Deployment
+                {
+                    ProjectId = projects.GetByRepo(repo)!.Id,
+                    Repo = repo,
+                    Branch = branch,
+                    BranchSlug = slug,
+                    Hostname = hostname,
+                    Aliases = aliases,
+                    Port = PortAllocator.Allocate(
+                        deployments.ListActive().Select(d => d.Port), PortAllocator.IsFreeOnHost),
+                    EnvSet = entry.Env,
+                    ExpireAfter = entry.ExpireAfter,
+                });
 
-            var id = deployments.Insert(deployment);
+                created = deployments.Get(id)!;
+            }
+            catch (Exception e) when (e is ProjectCollisionException or BosonValidationException)
+            {
+                // No port left, or another branch's first deploy took the port
+                // or the name between the check above and the insert.
+                return Stop(null, e.Message, log);
+            }
 
-            log.Add($"{branch} declared: {hostname} on 127.0.0.1:{deployment.Port}");
+            log.Add($"{branch} declared: {hostname} on 127.0.0.1:{created.Port}");
 
-            existing = deployments.Get(id)!;
+            try
+            {
+                await caddy.SyncAsync(ct);
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                // Withdrawn, or the next deploy would find the deployment in
+                // place, see nothing to change, skip the sync and build a site
+                // Caddy has never been told about.
+                deployments.Archive(created.Id);
 
-            await caddy.SyncAsync(ct);
+                return Stop(null, $"caddy did not take the route for {hostname}: {e.Message}", log);
+            }
+
+            existing = created;
         }
         else if (existing.Hostname != hostname || existing.Aliases != aliases
                  || existing.EnvSet != entry.Env || existing.ExpireAfter != entry.ExpireAfter)
         {
+            var before = existing;
+
             // The file is the authority, so a change in it moves routing and
             // certificates with it rather than being reported as a conflict.
-            deployments.SetDeclared(existing.Id, hostname, aliases, entry.Env, entry.ExpireAfter);
+            try
+            {
+                deployments.SetDeclared(existing.Id, hostname, aliases, entry.Env, entry.ExpireAfter);
+            }
+            catch (ProjectCollisionException e)
+            {
+                return Stop(before, e.Message, log);
+            }
 
             log.Add($"{BosonFile.FileName} changed: {hostname}");
 
-            existing = deployments.Get(existing.Id)!;
+            try
+            {
+                await caddy.SyncAsync(ct);
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                // Put back for the same reason a new deployment is withdrawn:
+                // the next deploy has to see the change again to retry it.
+                deployments.SetDeclared(
+                    before.Id, before.Hostname, before.Aliases, before.EnvSet, before.ExpireAfter);
 
-            await caddy.SyncAsync(ct);
+                return Stop(before, $"caddy did not take the change to {hostname}: {e.Message}", log);
+            }
+
+            existing = deployments.Get(existing.Id)!;
         }
 
         return new Preparation.Ready(existing, file, entry, checkoutDir, sha, log);
+    }
+
+    /// <summary>
+    /// Which of these names another active deployment already serves, as a
+    /// sentence naming the deployment that has it, or null when all are free.
+    /// </summary>
+    internal static string? ClaimedElsewhere(
+        IEnumerable<Deployment> active, long? self, IEnumerable<string> names)
+    {
+        var wanted = names.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var other in active.Where(d => d.Id != self))
+        {
+            var held = other.AliasList.Append(other.Hostname).FirstOrDefault(wanted.Contains);
+
+            if (held is not null)
+                return $"{BosonFile.FileName}: {held} is already served by {other.Repo} branch {other.Branch}";
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -389,7 +482,9 @@ public sealed class Deployer(
             if (!succeeded) error = $"docker compose up exited {result.ExitCode}";
 
             if (succeeded)
-                await imageRetainer.PruneAsync(config.StdOut, ready.Sha, ready.File.Images.Keep, Log, ct);
+                await imageRetainer.PruneAsync(
+                    config.StdOut, ready.Sha, RemovableCommits(deployment, ready.Sha, ready.File.Images.Keep),
+                    ready.File.Images.Keep, Log, ct);
         }
         catch (Exception e)
         {
@@ -402,6 +497,44 @@ public sealed class Deployer(
         Log(succeeded ? "deploy succeeded" : $"deploy failed: {error}");
 
         return succeeded;
+    }
+
+    /// <summary>
+    /// The commits whose images this deploy may delete. This deploy's own
+    /// commit leads the deployment's history because its row is still running
+    /// when retention happens.
+    /// </summary>
+    private HashSet<string> RemovableCommits(Deployment deployment, string sha, int keep)
+    {
+        var own = new[] { sha }.Concat(deploys.ListSucceededCommits(deployment.Id));
+
+        return ComposeImages.Removable(own, keep, KeptByOthers(deployment, keep));
+    }
+
+    /// <summary>
+    /// What every other active deployment keeps, each by the `images.keep` in
+    /// its own checkout: a branch keeping five must not lose two of them to a
+    /// branch that keeps three. A checkout that cannot say falls back to the
+    /// number the caller is working with.
+    /// </summary>
+    private IEnumerable<IEnumerable<string>> KeptByOthers(Deployment deployment, int fallbackKeep) =>
+        deployments.ListActive()
+            .Where(d => d.Id != deployment.Id)
+            .Select(d => deploys.ListSucceededCommits(d.Id).Take(KeepOf(d) ?? fallbackKeep))
+            .ToList();
+
+    private int? KeepOf(Deployment deployment)
+    {
+        try
+        {
+            return BosonFile.Find(paths.CheckoutDir(deployment.Repo, deployment.BranchSlug), out _)?.Images.Keep;
+        }
+        catch (Exception)
+        {
+            // Another branch's unreadable file is that branch's deploy to
+            // report, not a reason for this one to fail.
+            return null;
+        }
     }
 
     public async Task TearDownAsync(Deployment deployment, CancellationToken ct = default)
@@ -427,11 +560,65 @@ public sealed class Deployer(
             await caddy.SyncAsync(ct);
 
             logger.LogInformation("{Repo}#{Branch}: torn down", deployment.Repo, deployment.Branch);
+
+            // Last, and never fatal: the deployment is already stopped and
+            // unrouted, and a host that keeps a few images has lost nothing.
+            try
+            {
+                await RemoveImagesAsync(deployment, composeName, ct);
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                logger.LogWarning(e, "{Repo}#{Branch}: could not remove its images", deployment.Repo, deployment.Branch);
+            }
         }
         finally
         {
             locks.Exit(key);
         }
+    }
+
+    /// <summary>
+    /// Removes the images a torn-down deployment built. Retention runs on
+    /// deploy and only over a deployment's own commits, so without this every
+    /// expired preview branch leaves its last few images on the host for good.
+    /// A commit another deployment still keeps is left for that deployment.
+    /// </summary>
+    private async Task RemoveImagesAsync(Deployment deployment, string composeName, CancellationToken ct)
+    {
+        var commits = deploys.ListSucceededCommits(deployment.Id);
+
+        if (commits.Count == 0) return;
+
+        // The image names are in the compose file, which is in the checkout
+        // that teardown leaves behind.
+        var checkoutDir = paths.CheckoutDir(deployment.Repo, deployment.BranchSlug);
+
+        if (!Directory.Exists(checkoutDir)) return;
+
+        var variables = new ComposeVariables(
+            deployment.Port, paths.EnvFile(deployment.Repo, deployment.EnvSet ?? BosonPaths.DefaultEnvSet),
+            commits[0], deployment.BranchSlug);
+
+        var config = await docker.ComposeConfigAsync(composeName, checkoutDir, variables, ct);
+
+        if (!config.Ok)
+        {
+            logger.LogWarning(
+                "{Repo}#{Branch}: images left in place, docker compose config: {Error}",
+                deployment.Repo, deployment.Branch, config.StdErr.Trim());
+            return;
+        }
+
+        // A torn-down deployment keeps none of its own, and its own number is
+        // only the fallback for another whose checkout cannot say.
+        var fallbackKeep = KeepOf(deployment) ?? new ImagesSection().Keep;
+
+        await imageRetainer.RemoveAsync(
+            config.StdOut, commits[0],
+            ComposeImages.Removable(commits, keep: 0, KeptByOthers(deployment, fallbackKeep)),
+            line => logger.LogInformation("{Repo}#{Branch}: {Line}", deployment.Repo, deployment.Branch, line),
+            ct);
     }
 
     private static void TryDelete(string dir)

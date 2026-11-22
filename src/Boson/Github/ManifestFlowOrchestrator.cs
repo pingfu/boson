@@ -433,6 +433,21 @@ public sealed class ManifestFlowOrchestrator(
                 return new Declaration(error, warnings, envSets);
             }
 
+            // Fixed with a push like any other problem in the file, so it is
+            // reported the same way and the project is kept.
+            var reserved = declared.ControlHostnameProblem(platform.Get(PlatformRepository.AdminHostname))
+                           ?? declared.Deployments
+                               .Where(d => !d.IsPattern)
+                               .Select(d => Deployer.ClaimedElsewhere(
+                                   deployments.ListActive(), null, d.Aliases.Append(d.Hostname)))
+                               .FirstOrDefault(problem => problem is not null);
+
+            if (reserved is not null)
+            {
+                logger.LogWarning("{Repo}: {Error}", repo, reserved);
+                return new Declaration(reserved, warnings, envSets);
+            }
+
             try
             {
                 await CreateDeploymentsAsync(project, declared, defaultBranch, warnings, envSets);

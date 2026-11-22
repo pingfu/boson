@@ -97,10 +97,10 @@ public static class InitCommand
         // 0700 throughout: the DB holds every project's App private key, and the
         // checkouts under /srv hold the .env files the operator drops in. Both
         // are readable by any local user otherwise.
-        foreach (var dir in new[] { paths.DataDir, paths.LogDir, paths.SrvDir })
+        if (await SecureDirectoriesAsync(runner, [paths.DataDir, paths.LogDir, paths.SrvDir], ct) is { } insecure)
         {
-            await runner.RunAsync("chown", ["-R", "boson:boson", dir], ct: ct);
-            await runner.RunAsync("chmod", ["0700", dir], ct: ct);
+            Console.Error.WriteLine(insecure);
+            return ExitCodes.RuntimeFailure;
         }
 
         Console.WriteLine("✓ directories in place");
@@ -210,6 +210,54 @@ public static class InitCommand
             "warning until you trust it. Diagnose with docker logs boson-caddy and journalctl -u boson)");
 
         return ExitCodes.Success;
+    }
+
+    /// <summary>
+    /// Hands each directory to `boson` and closes it to everyone else. Returns
+    /// what failed, or null. Checked rather than assumed: a chmod that did not
+    /// happen leaves every project's App key and environment set readable by
+    /// any local user, and nothing later would say so.
+    /// </summary>
+    internal static async Task<string?> SecureDirectoriesAsync(
+        IProcessRunner runner, IReadOnlyList<string> directories, CancellationToken ct = default)
+    {
+        foreach (var dir in directories)
+        {
+            var chown = await runner.RunAsync("chown", ["-R", "boson:boson", dir], ct: ct);
+
+            if (!chown.Ok)
+                return Stopped($"could not give everything under {dir} to the boson user", "chown -R boson:boson", dir, chown);
+
+            var chmod = await runner.RunAsync("chmod", ["0700", dir], ct: ct);
+
+            if (!chmod.Ok)
+                return Stopped($"could not set {dir} to mode 0700", "chmod 0700", dir, chmod);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// init is also the recovery command, so a stop here has to say enough to
+    /// get past it: every path the tool named, since `chown -R` carries on
+    /// after a failure and reports each one, the usual causes, and that
+    /// running it again is safe.
+    /// </summary>
+    private static string Stopped(string what, string command, string dir, ProcessResult result)
+    {
+        var reported = result.StdErr
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(line => $"    {line}");
+
+        return string.Join(Environment.NewLine,
+        [
+            $"✗ {what}; `{command} {dir}` exited {result.ExitCode}:",
+            .. reported,
+            "  The usual causes are a read-only or foreign mount under it (findmnt -R " + dir + ")",
+            "  and an immutable file (lsattr on the path named above).",
+            "  Fix or move what is named above, then re-run boson init: every step up to here is safe to repeat,",
+            "  and this run has not touched the daemon.",
+        ]);
     }
 
     private static async Task<bool> HealthOkAsync(CancellationToken ct)

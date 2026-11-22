@@ -218,8 +218,13 @@ public sealed class FakeDeployer : IDeployer
         return Task.FromResult<DeployResult>(new DeployResult.Completed(1, true, 1));
     }
 
+    /// <summary>The deployment whose teardown fails, the way one does when Caddy is down.</summary>
+    public long? TearDownThrowsFor;
+
     public Task TearDownAsync(Deployment deployment, CancellationToken ct = default)
     {
+        if (deployment.Id == TearDownThrowsFor) throw new HttpRequestException("simulated teardown failure");
+
         lock (TearDowns) TearDowns.Add(deployment);
         TornDown.TrySetResult();
         return Task.CompletedTask;

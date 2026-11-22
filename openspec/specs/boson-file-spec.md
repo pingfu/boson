@@ -72,7 +72,7 @@ The system SHALL replace `{branch}` in a hostname with the branch's slug. A patt
 - WHEN the entry is `branch: "*"`, `hostname: "{branch}.example.org"` and the branch is `develop`
 - THEN the hostname is `develop.example.org`
 
-[bug] `{branch}` is filled in for `hostname` and left as written in `aliases`. A pattern entry with an alias gives every matching branch the same alias, so the second branch collides with the first and its deploy crashes as described under Name uniqueness in [routing](routing-spec.md).
+[bug] `{branch}` is filled in for `hostname` and left as written in `aliases`. A pattern entry with an alias gives every matching branch the same alias, so the second branch's deploy fails with the alias reported as already served by the first.
 
 ### Requirement: Branch slug
 The system SHALL reduce a branch name to a slug of `a-z`, `0-9` and `-`, at most 63 characters, as follows:
@@ -96,7 +96,7 @@ The system SHALL reduce a branch name to a slug of `a-z`, `0-9` and `-`, at most
 - THEN their slugs differ, because the first carries a hash suffix and the second is unchanged
 
 ### Requirement: Validation
-The system SHALL reject a file with the first problem found and report it with the message shown. The order is: parse, version, no entries, then for each entry from the top its branch, hostname, placeholder and duplicate-name checks, then `images.keep`.
+The system SHALL reject a file with the first problem found and report it with the message shown. The order is: parse, version, no entries, then for each entry from the top its branch, hostname, placeholder, duplicate-name, `env` and `expire_after` checks, then `images.keep`.
 
 | Problem | Message |
 |---|---|
@@ -108,6 +108,8 @@ The system SHALL reject a file with the first problem found and report it with t
 | Pattern entry without `{branch}` | `_boson.yml: <branch> matches many branches, so its hostname needs {branch} in it` |
 | Single-branch entry with `{branch}` | `_boson.yml: <branch> names one branch, so {branch} in its hostname has nothing to vary` |
 | Hostname or alias used twice, compared case-insensitively | `_boson.yml: <name> is claimed by both <branch> and <branch>` |
+| `env` is not a file name of letters, digits, `.`, `_` and `-`, or starts with `.` | `_boson.yml: env for <branch> is "<value>"; an environment set is a file name made of letters, digits, '.', '_' and '-', and does not start with '.'` |
+| `expire_after` is not a positive whole number followed by `d`, `h` or `m`, or is too large to be a time span | `_boson.yml: expire_after for <branch> is "<value>"; write a whole number followed by d, h or m, such as 14d` |
 | `images.keep` below 1 | `_boson.yml: images.keep is <n>, and a deployment needs at least one image` |
 
 #### Scenario: Two entries claim one hostname
@@ -118,7 +120,13 @@ The system SHALL reject a file with the first problem found and report it with t
 - WHEN a deploy reads a file that fails validation
 - THEN the deploy fails before it builds, with the validation message as its error
 
-[bug] A key present with no value (`deployments:`, `aliases:`, `images:`, a bare `-` entry) throws a null reference out of the parser instead of producing a message. A deploy then crashes with no deploy row, and `boson add` reports `Object reference not set to an instance of an object.`
+#### Scenario: Key with no value
+- WHEN the file holds `aliases:`, `env:`, `expire_after:` or `images:` with nothing after it
+- THEN the key is treated as absent
+
+#### Scenario: Empty entries
+- WHEN the file holds `deployments:` with nothing after it, a bare `-` entry, or an empty alias
+- THEN it is rejected with `_boson.yml declares no deployments`, `_boson.yml has an empty entry under deployments`, or `_boson.yml: deployment for <branch> has an empty alias`
 
 ### Requirement: The file is the authority
 The system SHALL apply the matching entry's `hostname`, `aliases`, `env` and `expire_after` to the stored deployment on every deploy, and synchronise Caddy when any of them changed.

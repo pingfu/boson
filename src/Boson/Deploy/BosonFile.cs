@@ -23,6 +23,17 @@ public sealed class BosonFile
     public DeploymentEntry? Match(string branch) =>
         Deployments.FirstOrDefault(d => d.Matches(branch));
 
+    /// <summary>
+    /// Why this file cannot be served, when any entry spells out the control
+    /// hostname as its hostname or an alias. Checked for every entry whichever
+    /// branch is deploying, so it is caught when the project is added rather
+    /// than when the branch concerned is first pushed.
+    /// </summary>
+    public string? ControlHostnameProblem(string? controlHostname) =>
+        Deployments
+            .Select(d => d.ControlHostnameProblem(controlHostname))
+            .FirstOrDefault(problem => problem is not null);
+
     public static BosonFile? Find(string checkoutDir, out string? problem)
     {
         var path = Path.Combine(checkoutDir, FileName);
@@ -67,6 +78,12 @@ public sealed class BosonFile
         if (file.Version != CurrentVersion)
             return $"{FileName} declares version {file.Version}; this boson reads version {CurrentVersion}";
 
+        // A key written with nothing after it (`deployments:`, `images:`,
+        // `aliases:`) deserialises as null over the property's default, and
+        // every line below would otherwise meet it as a null reference.
+        file.Deployments ??= [];
+        file.Images ??= new ImagesSection();
+
         if (file.Deployments.Count == 0)
             return $"{FileName} declares no deployments";
 
@@ -74,11 +91,19 @@ public sealed class BosonFile
 
         foreach (var entry in file.Deployments)
         {
+            if (entry is null)
+                return $"{FileName} has an empty entry under deployments";
+
             if (string.IsNullOrWhiteSpace(entry.Branch))
                 return $"{FileName} has a deployment with no branch";
 
             if (string.IsNullOrWhiteSpace(entry.Hostname))
                 return $"{FileName}: deployment for {entry.Branch} has no hostname";
+
+            entry.Aliases ??= [];
+
+            if (entry.Aliases.Any(string.IsNullOrWhiteSpace))
+                return $"{FileName}: deployment for {entry.Branch} has an empty alias";
 
             // Hostnames are case-insensitive, and what is stored here becomes a
             // row in deployment_names, a Caddy matcher and a certificate
@@ -106,6 +131,20 @@ public sealed class BosonFile
 
                 claimed[name] = entry.Branch;
             }
+
+            // The name becomes the last segment of a path under the project's
+            // own environment directory. Anything that could climb out of it
+            // (`../other/production`, an absolute path) would hand this
+            // repository another project's secrets.
+            if (entry.Env is not null && !DeploymentEntry.IsSetName(entry.Env))
+                return $"{FileName}: env for {entry.Branch} is \"{entry.Env}\"; an environment set is a file " +
+                       "name made of letters, digits, '.', '_' and '-', and does not start with '.'";
+
+            // Refused here rather than ignored at expiry: a typo would
+            // otherwise read as a deployment that never expires.
+            if (entry.ExpireAfter is not null && ExpiryReaper.ParseDuration(entry.ExpireAfter) is null)
+                return $"{FileName}: expire_after for {entry.Branch} is \"{entry.ExpireAfter}\"; write a whole " +
+                       "number followed by d, h or m, such as 14d";
         }
 
         if (file.Images.Keep < 1)
@@ -140,6 +179,38 @@ public sealed class DeploymentEntry
         Hostname.Replace(BranchPlaceholder, BranchSlug.From(branch), StringComparison.Ordinal);
 
     public IEnumerable<string> AllNames() => new[] { Hostname }.Concat(Aliases);
+
+    public static bool IsSetName(string name) =>
+        name.Length > 0 && name[0] != '.' && name.All(c =>
+            c is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '.' or '_' or '-');
+
+    /// <summary>
+    /// Why this entry cannot be served for a branch, when one of its names is
+    /// the control hostname. Caddy would route that name to the deployment
+    /// for every path outside /_boson/*, and the control plane would be
+    /// serving a repository's app.
+    /// </summary>
+    public string? ControlHostnameProblem(string branch, string? controlHostname) =>
+        ControlHostnameProblem(Aliases.Append(HostnameFor(branch)), branch, controlHostname);
+
+    /// <summary>
+    /// The same, for the names this entry spells out: its aliases, and its
+    /// hostname unless that is a pattern's template, which names nothing until
+    /// a branch fills it in.
+    /// </summary>
+    public string? ControlHostnameProblem(string? controlHostname) =>
+        ControlHostnameProblem(IsPattern ? Aliases : Aliases.Append(Hostname), Branch, controlHostname);
+
+    private static string? ControlHostnameProblem(
+        IEnumerable<string> names, string branch, string? controlHostname)
+    {
+        if (string.IsNullOrWhiteSpace(controlHostname)) return null;
+
+        return names.Any(n => string.Equals(n, controlHostname, StringComparison.OrdinalIgnoreCase))
+            ? $"{BosonFile.FileName}: {controlHostname} is boson's control hostname, so {branch} " +
+              "cannot use it as a hostname or an alias"
+            : null;
+    }
 
     /// <summary>
     /// `*` spans one or more characters including `/`, so `feature/*` covers
