@@ -82,11 +82,25 @@ Run every command as root on the server. `<org/name>` is the GitHub repository, 
 
 | Command | Does |
 |---|---|
+| `boson init <admin-hostname>` | Installs boson on the server: the daemon, Caddy and the admin hostname. Run once, and again to repair an install |
 | `boson status` | Lists every deployment: repo, hostname, published port, branch, webhook state, container state, last deploy |
 | `boson add <org/name>` | Registers a repo: creates its GitHub App, clones the default branch, creates a deployment for each branch `_boson.yml` names outright |
 | `boson deploy <org/name>` | Deploys the tip of the project's one branch now and streams the build log. A project with several branches needs `--branch <name>` |
 | `boson remove <org/name>` | Stops the containers of every branch and drops their routes. `--purge` also deletes the project's record and `/srv/<org>/<name>` |
 | `boson uninstall` | Removes the boson daemon, its user and Caddy from the server |
+
+The admin hostname is the callback address for GitHub App setup (not the webhook address GitHub posts pushes to), given to `boson init` and shown by `boson status` as `admin url`. It is used each time a project is added: `boson add <org/name>` prints a URL on it, the operator opens that URL in a browser, the page hands them to GitHub to create the App, and GitHub redirects the browser back to it once the App is created and again once it is installed. The callbacks are browser redirects, so the operator's browser is what has to reach it, and GitHub's servers do not. Between adds nothing has to reach it: deploys, webhooks and the sites themselves run without it. The one exception is a repo that declares pattern entries alone, covered in the last point below.
+
+It also serves `https://<admin-hostname>/_boson/health`, which answers 200 with the daemon's version and start time. That page is for a person: `boson init` prints the URL so the operator can open it and see that DNS and TLS work. No part of boson reads it there. `boson init` and `boson status` ask the daemon directly on `127.0.0.1:9000`, and on the server `boson status` reports the same thing.
+
+The webhook address is a different one. GitHub's servers post each push to the project's own public hostname, at `https://<hostname>/_boson/webhook/<org>/<name>`, which is why that hostname has to be reachable from the internet and the admin hostname does not.
+
+Choosing one:
+
+- **It resolves to the server from the operator's browser.** That is the whole reachability requirement, so a private name works (`boson.enclave`, a VPN or internal DNS name). Caddy issues a private name's certificate itself, and the browser warns about it until the operator trusts it.
+- **A public name gets a Let's Encrypt certificate** (`deploy.example.com`), and puts the setup and health pages on the internet.
+- **No project uses it.** A `_boson.yml` that declares the admin hostname as a hostname or an alias fails its deploy.
+- **It is public when a repo declares pattern entries alone.** That repo's webhook stays on the admin hostname, so GitHub has to reach it there.
 
 The sequence for a new project:
 
