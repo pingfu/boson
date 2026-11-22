@@ -10,12 +10,12 @@
 The system SHALL, on start and in this order: create its data and log directories, migrate the database to the binary's schema, mark interrupted deploys as failed, start the expiry sweep, and start both listeners.
 
 #### Scenario: Start after an upgrade
-- **WHEN** the daemon starts with a binary that carries newer migrations
-- **THEN** the migrations are applied before any listener accepts a request
+- WHEN the daemon starts with a binary that carries newer migrations
+- THEN the migrations are applied before any listener accepts a request
 
 #### Scenario: Database newer than the binary
-- **WHEN** the database schema version is higher than the binary's
-- **THEN** the daemon exits 2 with a message telling the operator to upgrade the binary
+- WHEN the database schema version is higher than the binary's
+- THEN the daemon exits 2 with a message telling the operator to upgrade the binary
 
 ### Requirement: Public listener
 The system SHALL listen on `127.0.0.1:9000` and serve:
@@ -31,12 +31,12 @@ The system SHALL listen on `127.0.0.1:9000` and serve:
 `--port` changes the port for a foreground run on a workstation. Caddy's routes target 9000.
 
 #### Scenario: Health check
-- **WHEN** a client requests `GET /_boson/health`
-- **THEN** the response is 200 with the daemon's version and start time
+- WHEN a client requests `GET /_boson/health`
+- THEN the response is 200 with the daemon's version and start time
 
 #### Scenario: Setup request for a dead token
-- **WHEN** a setup route is requested with a token that has no live setup
-- **THEN** the response is 404 and the daemon logs the route, the first 8 characters of the token and the reason
+- WHEN a setup route is requested with a token that has no live setup
+- THEN the response is 404 and the daemon logs the route, the first 8 characters of the token and the reason
 
 ### Requirement: RPC listener
 The system SHALL listen on the unix socket `/var/lib/boson/boson.sock` and serve the CLI:
@@ -52,44 +52,44 @@ The system SHALL listen on the unix socket `/var/lib/boson/boson.sock` and serve
 Bodies are JSON with camelCase keys. A refusal carries `{"error":"<reason>"}`, and the CLI prints that reason as it stands.
 
 #### Scenario: Refused deploy
-- **WHEN** a deploy request is refused
-- **THEN** the response body states the reason, and `boson deploy` prints it and exits 1 for a 404, 3 for a 409 and 2 otherwise
+- WHEN a deploy request is refused
+- THEN the response body states the reason, and `boson deploy` prints it and exits 1 for a 404, 3 for a 409 and 2 otherwise
 
 ### Requirement: Socket access
 The system SHALL delete a socket file left by an earlier process before binding, and set the socket's mode to `0660` once bound. Permission to open the socket is the RPC's authentication.
 
 #### Scenario: Restart after a kill
-- **WHEN** the daemon was killed and its socket file remains
-- **THEN** the next start binds successfully
+- WHEN the daemon was killed and its socket file remains
+- THEN the next start binds successfully
 
 ### Requirement: Daemon unreachable
 The CLI SHALL report a daemon it cannot reach over the socket with `boson daemon unreachable — check: systemctl status boson / journalctl -u boson` and exit 2. Each RPC request times out after 30 seconds.
 
 #### Scenario: Daemon stopped
-- **WHEN** `boson deploy` is run while the daemon is stopped
-- **THEN** the command prints the unreachable message and exits 2
+- WHEN `boson deploy` is run while the daemon is stopped
+- THEN the command prints the unreachable message and exits 2
 
 ### Requirement: Requests return before long work
 The system SHALL answer webhook, deploy and add requests before the work they start completes. Deploys, declarations and setup finalisation run on background tasks, and the CLI follows them by polling.
 
 #### Scenario: Slow first clone
-- **WHEN** a declaration clones a large repository
-- **THEN** no RPC request stays open for the length of the clone
+- WHEN a declaration clones a large repository
+- THEN no RPC request stays open for the length of the clone
 
 ### Requirement: Logging
 The system SHALL write its log to stdout, which systemd captures in the journal, and as JSON lines to `/var/log/boson/boson.log`, rolled at 10 MB with 5 files kept.
 
 #### Scenario: Reading why a deployment expired
-- **WHEN** the operator runs `journalctl -u boson`
-- **THEN** the expiry of each deployment is in the output
+- WHEN the operator runs `journalctl -u boson`
+- THEN the expiry of each deployment is in the output
 
 ### Requirement: Graceful shutdown
 The system SHALL, on SIGTERM or SIGINT, stop both listeners, wait up to 590 seconds for running deploys to finish, and exit 0. The unit's `TimeoutStopSec` is 600 and must stay above that wait.
 
 #### Scenario: Restart during a build
-- **WHEN** `systemctl restart boson` is run while a deploy is building
-- **THEN** the build finishes and its outcome is recorded before the daemon exits
+- WHEN `systemctl restart boson` is run while a deploy is building
+- THEN the build finishes and its outcome is recorded before the daemon exits
 
 #### Scenario: Deploy outlasts the wait
-- **WHEN** a deploy is still running after 590 seconds
-- **THEN** the daemon exits, and the deploy's row is marked failed with `daemon restart` on the next start
+- WHEN a deploy is still running after 590 seconds
+- THEN the daemon exits, and the deploy's row is marked failed with `daemon restart` on the next start

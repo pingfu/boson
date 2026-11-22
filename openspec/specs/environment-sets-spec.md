@@ -10,23 +10,25 @@ An environment set is a file of environment values kept on the host, outside the
 The system SHALL resolve an environment set named `<set>` for repository `<org>/<name>` to `/var/lib/boson/env/<org>/<name>/<set>`. Entries naming the same set share the file.
 
 #### Scenario: Two entries, one set
-- **WHEN** the entries for `"*"` and `feature/*` both declare `env: preview`
-- **THEN** every deployment they produce reads `/var/lib/boson/env/<org>/<name>/preview`
+- WHEN the entries for `"*"` and `feature/*` both declare `env: preview`
+- THEN every deployment they produce reads `/var/lib/boson/env/<org>/<name>/preview`
 
 ### Requirement: Named set must exist
 The system SHALL fail a deploy before running compose when the deployment names an environment set whose file does not exist, with an error naming the set, the branch and the path.
 
 #### Scenario: Set file missing
-- **WHEN** the entry declares `env: production` and `/var/lib/boson/env/acme/site/production` does not exist
-- **THEN** the deploy fails with `_boson.yml names env set production for main, and /var/lib/boson/env/acme/site/production does not exist`
-- **AND** nothing is built
+- WHEN the entry declares `env: production` and `/var/lib/boson/env/acme/site/production` does not exist
+- THEN the deploy fails with `_boson.yml names env set production for main, and /var/lib/boson/env/acme/site/production does not exist`
+- AND nothing is built
 
 ### Requirement: Entry without a set
 When an entry declares no `env`, the system SHALL pass the path of the set named `default` without requiring the file to exist.
 
 #### Scenario: No env declared
-- **WHEN** the entry has no `env` and no `default` file exists
-- **THEN** the deploy proceeds, with `BOSON_ENV_FILE` set to `/var/lib/boson/env/<org>/<name>/default`
+- WHEN the entry has no `env` and no `default` file exists
+- THEN the deploy proceeds, with `BOSON_ENV_FILE` set to `/var/lib/boson/env/<org>/<name>/default`
+
+[bug] `BOSON_YML.md` says an entry without `env` gets no environment file. A `default` file on the host is handed to such a deployment through `BOSON_ENV_FILE`, and a compose file that declares `env_file: ${BOSON_ENV_FILE}` fails at `docker compose config` when the file is absent.
 
 ### Requirement: Compose variables
 The system SHALL supply these variables in the process environment of the `docker compose config` and `docker compose up` it runs for a deployment:
@@ -41,16 +43,16 @@ The system SHALL supply these variables in the process environment of the `docke
 The values are never written into the checkout.
 
 #### Scenario: Compose file consumes the variables
-- **WHEN** a compose file declares `ports: ["127.0.0.1:${BOSON_PORT}:8080"]`, `env_file: ${BOSON_ENV_FILE}` and `image: my-app:${BOSON_COMMIT}`
-- **THEN** compose resolves them to the deployment's port, set path and commit
+- WHEN a compose file declares `ports: ["127.0.0.1:${BOSON_PORT}:8080"]`, `env_file: ${BOSON_ENV_FILE}` and `image: my-app:${BOSON_COMMIT}`
+- THEN compose resolves them to the deployment's port, set path and commit
 
 #### Scenario: Checkout is reset
-- **WHEN** a deploy runs `git reset --hard` in the checkout
-- **THEN** the environment set is unaffected, because it is outside `/srv`
+- WHEN a deploy runs `git reset --hard` in the checkout
+- THEN the environment set is unaffected, because it is outside `/srv`
 
 ### Requirement: Sets reported at add
 The system SHALL report, when `boson add` completes, the path of every distinct environment set named in `_boson.yml`, sorted by name.
 
 #### Scenario: File names two sets
-- **WHEN** the entries declare `production` and `preview`
-- **THEN** `boson add` lists `/var/lib/boson/env/<org>/<name>/preview` and `/var/lib/boson/env/<org>/<name>/production` as files to create
+- WHEN the entries declare `production` and `preview`
+- THEN `boson add` lists `/var/lib/boson/env/<org>/<name>/preview` and `/var/lib/boson/env/<org>/<name>/production` as files to create

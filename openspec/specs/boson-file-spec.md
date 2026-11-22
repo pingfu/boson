@@ -15,6 +15,8 @@ The system SHALL read `_boson.yml` as YAML with these keys, ignoring any other k
 | `deployments` | list of entries | yes, at least one | |
 | `images.keep` | integer, at least 1 | no | `3` |
 
+[bug] `BOSON_YML.md` says `images` is read from the default branch. `Deployer` uses the value in the file of the branch being deployed, so two branches can disagree.
+
 Each entry:
 
 | Key | Type | Required | Meaning |
@@ -26,45 +28,45 @@ Each entry:
 | `expire_after` | string | no | Idle time before the deployment is stopped |
 
 #### Scenario: Minimal file
-- **WHEN** the file holds `version: 1` and one entry with `branch: main` and `hostname: example.org`
-- **THEN** it is valid, and `images.keep` is 3
+- WHEN the file holds `version: 1` and one entry with `branch: main` and `hostname: example.org`
+- THEN it is valid, and `images.keep` is 3
 
 #### Scenario: Unknown key
-- **WHEN** the file holds a key the schema does not list
-- **THEN** the key is ignored and the file is valid
+- WHEN the file holds a key the schema does not list
+- THEN the key is ignored and the file is valid
 
 ### Requirement: Normalisation
 The system SHALL trim `branch`, and trim and lowercase `hostname` and every alias, before using them.
 
 #### Scenario: Mixed-case hostname
-- **WHEN** an entry declares `hostname: Example.ORG`
-- **THEN** the deployment serves `example.org`
+- WHEN an entry declares `hostname: Example.ORG`
+- THEN the deployment serves `example.org`
 
 ### Requirement: Branch matching
 The system SHALL match a branch against entries from top to bottom and use the first that matches. An entry without `*` matches by exact, case-sensitive comparison. In an entry with `*`, each `*` stands for one or more characters, including `/`.
 
 #### Scenario: Named entry above a pattern
-- **WHEN** the file lists `main` and then `"*"`, and `main` is deployed
-- **THEN** the `main` entry is used
+- WHEN the file lists `main` and then `"*"`, and `main` is deployed
+- THEN the `main` entry is used
 
 #### Scenario: Pattern spans slashes
-- **WHEN** the entry is `feature/*` and the branch is `feature/a/b`
-- **THEN** the entry matches
+- WHEN the entry is `feature/*` and the branch is `feature/a/b`
+- THEN the entry matches
 
 #### Scenario: Wildcard needs a character
-- **WHEN** the entry is `feature/*` and the branch is `feature/`
-- **THEN** the entry does not match
+- WHEN the entry is `feature/*` and the branch is `feature/`
+- THEN the entry does not match
 
 #### Scenario: No entry matches
-- **WHEN** no entry matches the branch
-- **THEN** the branch has no deployment declared
+- WHEN no entry matches the branch
+- THEN the branch has no deployment declared
 
 ### Requirement: Branch placeholder
 The system SHALL replace `{branch}` in a hostname with the branch's slug. A pattern entry's hostname SHALL contain `{branch}`, and an entry naming one branch SHALL NOT.
 
 #### Scenario: Pattern hostname
-- **WHEN** the entry is `branch: "*"`, `hostname: "{branch}.example.org"` and the branch is `develop`
-- **THEN** the hostname is `develop.example.org`
+- WHEN the entry is `branch: "*"`, `hostname: "{branch}.example.org"` and the branch is `develop`
+- THEN the hostname is `develop.example.org`
 
 ### Requirement: Branch slug
 The system SHALL reduce a branch name to a slug of `a-z`, `0-9` and `-`, at most 63 characters, as follows:
@@ -76,16 +78,16 @@ The system SHALL reduce a branch name to a slug of `a-z`, `0-9` and `-`, at most
 5. When the result differs from the branch name, or is longer than 63 characters, cut it to 56 characters, trim trailing `-`, and append `-` and the 6 hex characters.
 
 #### Scenario: Name already a slug
-- **WHEN** the branch is `main`
-- **THEN** the slug is `main`
+- WHEN the branch is `main`
+- THEN the slug is `main`
 
 #### Scenario: Name with a slash
-- **WHEN** the branch is `feature/add-search`
-- **THEN** the slug is `feature-add-search-<6 hex>`
+- WHEN the branch is `feature/add-search`
+- THEN the slug is `feature-add-search-<6 hex>`
 
 #### Scenario: Two branches reducing to the same text
-- **WHEN** the branches are `Feature/X` and `feature-x`
-- **THEN** their slugs differ, because the first carries a hash suffix and the second is unchanged
+- WHEN the branches are `Feature/X` and `feature-x`
+- THEN their slugs differ, because the first carries a hash suffix and the second is unchanged
 
 ### Requirement: Validation
 The system SHALL reject a file with the first problem found, in this order, and report it with the message shown.
@@ -103,21 +105,25 @@ The system SHALL reject a file with the first problem found, in this order, and 
 | `images.keep` below 1 | `_boson.yml: images.keep is <n>, and a deployment needs at least one image` |
 
 #### Scenario: Two entries claim one hostname
-- **WHEN** entries for `main` and `develop` both declare `example.org`, as a hostname or an alias
-- **THEN** the file is rejected with `_boson.yml: example.org is claimed by both main and develop`
+- WHEN entries for `main` and `develop` both declare `example.org`, as a hostname or an alias
+- THEN the file is rejected with `_boson.yml: example.org is claimed by both main and develop`
 
 #### Scenario: Invalid file on deploy
-- **WHEN** a deploy reads a file that fails validation
-- **THEN** the deploy fails before it builds, with the validation message as its error
+- WHEN a deploy reads a file that fails validation
+- THEN the deploy fails before it builds, with the validation message as its error
 
 ### Requirement: The file is the authority
 The system SHALL apply the matching entry's `hostname`, `aliases`, `env` and `expire_after` to the stored deployment on every deploy, and synchronise Caddy when any of them changed.
 
 #### Scenario: Hostname changed in the file
-- **WHEN** a push changes the entry's hostname from `old.example.org` to `new.example.org`
-- **THEN** the deploy of that push updates the deployment, and Caddy routes `new.example.org` and no longer routes `old.example.org`
+- WHEN a push changes the entry's hostname from `old.example.org` to `new.example.org`
+- THEN the deploy of that push updates the deployment, and Caddy routes `new.example.org` and no longer routes `old.example.org`
+
+[bug] The App's webhook address is set once, during declaration. When the deployment whose hostname carries it changes hostname, GitHub keeps delivering to the old name, which Caddy no longer routes, and pushes stop deploying for the whole project.
+
+[bug] Stored aliases are read back sorted by name and compared with the file's aliases in file order. An entry listing aliases unsorted is treated as changed on every deploy: the log records `_boson.yml changed`, the names are rewritten and Caddy is reloaded.
 
 #### Scenario: Entry removed from the file
-- **WHEN** a deployed branch's entry is removed and the branch is pushed
-- **THEN** the deploy fails with `_boson.yml no longer declares <branch>`
-- **AND** the deployment's containers keep running until `boson remove`
+- WHEN a deployed branch's entry is removed and the branch is pushed
+- THEN the deploy fails with `_boson.yml no longer declares <branch>`
+- AND the deployment's containers keep running until `boson remove`
