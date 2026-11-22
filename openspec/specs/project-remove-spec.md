@@ -19,7 +19,9 @@ The system SHALL run `docker compose --project-name <name> down` for every activ
 
 #### Scenario: Compose down fails
 - WHEN `docker compose down` exits non-zero for a deployment
-- THEN the failure is logged and the removal continues
+- THEN the failure is logged, the deployment is archived, and the removal continues
+
+[bug] Removal takes no deployment lock. A deploy in flight runs `docker compose up` after the `down`, leaving containers running for a deployment that is archived or deleted.
 
 ### Requirement: Archive
 Without `--purge`, the system SHALL archive the project row, keep its deploy history and leave `/srv/<org>/<name>` in place. An archived repository can be added again.
@@ -28,12 +30,16 @@ Without `--purge`, the system SHALL archive the project row, keep its deploy his
 - WHEN a project is removed and `boson add` is run for the same repository
 - THEN the add is accepted
 
+[bug] An archived project cannot be purged afterwards: `boson remove --purge` answers `unknown project`. Its row, with the App's private key and webhook secret, stays until the repository is added again and that project is purged.
+
 ### Requirement: Purge
-With `--purge`, the system SHALL delete the project row, which cascades to its deployments and deploy history, and delete `/srv/<org>/<name>`.
+With `--purge`, the system SHALL delete every project row for the repository, active and archived, which cascades to their deployments and deploy rows, and delete `/srv/<org>/<name>`. Deploy log files under `/var/log/boson/deploys/` remain.
 
 #### Scenario: Checkout cannot be deleted
 - WHEN deleting the directory throws
 - THEN the failure is logged and the removal completes
+
+[bug] The command then still prints `row, deploy history and checkout deleted`.
 
 ### Requirement: Routing
 The system SHALL synchronise Caddy after the removal, so the project's hostnames stop being served.
@@ -41,6 +47,8 @@ The system SHALL synchronise Caddy after the removal, so the project's hostnames
 #### Scenario: Hostname after removal
 - WHEN a project is removed
 - THEN the Caddy configuration holds no route for any of its hostnames or aliases
+
+[bug] The synchronisation runs after the archive or purge is committed and its failure is not handled. With Caddy down, the command prints `remove failed (500)` and exits 2, the project is already gone, a re-run answers `unknown project`, and the routes stay until a later synchronisation.
 
 ### Requirement: Outcome
 The system SHALL report what was removed and the GitHub App settings URL where the operator deletes the App.

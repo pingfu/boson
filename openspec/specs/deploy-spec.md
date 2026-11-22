@@ -48,7 +48,7 @@ When a project has no active deployment, the system SHALL start the declaration 
 - THEN it follows the running declaration
 
 ### Requirement: Following a deploy
-The system SHALL answer a deploy request with the deploy's id as soon as its row exists. The CLI SHALL print the log file `/var/log/boson/deploys/<id>.log` as it grows and poll the deploy row every 300 ms until it finishes.
+The system SHALL answer a deploy request with the id of the first pass's deploy as soon as its row exists, which is after the fetch and `_boson.yml` steps. The CLI SHALL print the log file `/var/log/boson/deploys/<id>.log` as it grows and poll the deploy row every 300 ms until it finishes.
 
 #### Scenario: Deploy succeeds
 - WHEN the deploy row finishes with status `succeeded`
@@ -62,6 +62,8 @@ The system SHALL answer a deploy request with the deploy's id as soon as its row
 - WHEN the operator presses Ctrl-C while the log streams
 - THEN the command stops watching and exits 0, and the daemon finishes the deploy
 
+[bug] A fetch that takes longer than the 30 second RPC timeout ends the command with exit 1 and no output, while the daemon carries on deploying.
+
 ### Requirement: One deploy per deployment at a time
 The system SHALL hold a non-blocking lock keyed by repository and branch for the length of a deploy. Deployments of different branches run concurrently.
 
@@ -72,6 +74,8 @@ The system SHALL hold a non-blocking lock keyed by repository and branch for the
 #### Scenario: Push while one runs
 - WHEN a webhook deploy finds the lock held
 - THEN `deploy_pending` is set on the deployment and the running deploy picks it up
+
+[bug] The flag needs a deployment row. A second push during a new branch's first deploy, before the row is created, is answered 202 and recorded nowhere.
 
 ### Requirement: Pipeline
 The system SHALL run each deploy pass in this order, stopping at the first failure:
@@ -110,7 +114,9 @@ The system SHALL create a deployment for a branch on its first deploy, when a `_
 
 #### Scenario: Branch nothing declares
 - WHEN a branch with no deployment is fetched and no entry matches it
-- THEN the checkout this deploy created is deleted and no deployment or deploy row is written
+- THEN the branch's checkout directory is deleted and no deployment or deploy row is written
+
+[bug] The directory is deleted whoever created it, including the checkout an expired deployment left behind and the default-branch checkout made by declaration.
 
 ### Requirement: Port allocation
 The system SHALL allocate each new deployment the lowest port from 30000 to 32767 that no active deployment holds and that can be bound on 127.0.0.1 at that moment.
@@ -126,6 +132,8 @@ The system SHALL allocate each new deployment the lowest port from 30000 to 3276
 #### Scenario: Range exhausted
 - WHEN every port in the range is held or in use
 - THEN allocation fails with `no free port between 30000 and 32767`
+
+[bug] Allocation is not serialised across branches. Two new branches deploying at once can be given the same port, and the second insert fails on the port's uniqueness.
 
 ### Requirement: Compose project name
 The system SHALL pass `--project-name` on every `docker compose` invocation for a deployment. The name is `<org>/<name>-<slug>`, lowercased, with every character outside `a-z`, `0-9`, `_` and `-` replaced by `-`.
@@ -149,6 +157,8 @@ The system SHALL fail a deploy before building when the resolved compose configu
 - WHEN a service publishes a port other than the allocated one
 - THEN the deploy fails, naming the service, the port it publishes and the port boson allocated
 
+[bug] A published host-port range such as `8000-8010` fails the deploy with the raw parse error `The input string '8000-8010' was not in a correct format.`
+
 ### Requirement: Deploy log
 The system SHALL write one log file per deploy, containing a header naming the deploy id, repository, branch and trigger, each git command and its output, the fetched commit, the environment set and its path, the output of `docker compose up`, and a final line `deploy succeeded` or `deploy failed: <error>`. The installation token is replaced with `***` wherever it would appear.
 
@@ -158,6 +168,8 @@ The system SHALL write one log file per deploy, containing a header naming the d
 
 ### Requirement: Recording failures
 The system SHALL record a failure against the deployment when one exists, as a deploy row with status `failed` and a log file. A failure for a branch with no deployment is written to the daemon log.
+
+[bug] This holds for a failed token mint or fetch, a missing or invalid file, and a missing entry. Every other failure in step 4 throws out of the deploy with no deploy row and no log file, even when the deployment exists: port exhaustion, a name or port collision, a failed Caddy synchronisation, and the parser crash noted in [boson-file](boson-file-spec.md). A webhook deploy leaves `webhook deploy task crashed` in the daemon log. `boson deploy` prints `deploy request failed (500)` and exits 2. After a failed Caddy synchronisation the stored values already match the file, so the next deploy skips the synchronisation and succeeds while Caddy still routes the old state.
 
 #### Scenario: Fetch fails for an existing deployment
 - WHEN the fetch fails for a branch that has a deployment
@@ -175,7 +187,9 @@ The system SHALL set `webhook_active` on a deployment when a deploy of it first 
 - THEN `webhook_active` stays unset
 
 ### Requirement: Draining pending pushes
-After each pass, while still holding the lock, the system SHALL check `deploy_pending`. When it is set, the system SHALL clear it and run another pass with trigger `webhook`, whether the pass before succeeded or failed, up to 3 passes in one deploy.
+After each pass that reached step 5, while still holding the lock, the system SHALL check `deploy_pending`. When it is set, the system SHALL clear it and run another pass with trigger `webhook`, whether the pass before succeeded or failed, up to 3 passes in one deploy. `boson deploy` follows the first pass.
+
+[bug] A pass that fails in steps 1 to 4 ends the deploy without checking the flag, so a push that arrived during it stays undeployed until `boson status` reports it. The flag is also not cleared when a deploy starts, so a stale one causes a second pass.
 
 #### Scenario: Push arrives during a deploy
 - WHEN a push to the same branch arrives while a deploy runs

@@ -49,6 +49,8 @@ The system SHALL enforce, among rows whose `archived_at` is null: one project pe
 - WHEN a deployment is inserted with a hostname, alias, port or branch an active deployment holds
 - THEN the insert is rolled back and refused with a message naming the hostname, port and branch
 
+[bug] Both repositories report every SQLite constraint failure this way, so a NOT NULL, CHECK or foreign key failure is also reported as "already added" or "already claimed".
+
 ### Requirement: Archiving
 The system SHALL archive a project or deployment by setting `archived_at`, keeping the row and its deploy history. Archiving a deployment deletes its `deployment_names` rows.
 
@@ -57,7 +59,7 @@ The system SHALL archive a project or deployment by setting `archived_at`, keepi
 - THEN its hostname, aliases, port, branch and slug can be held by a new deployment
 
 ### Requirement: Purging
-The system SHALL delete a purged project's row, and with it, by cascade, its deployments, their names and their deploys.
+The system SHALL delete every `projects` row for a purged repository, active and archived, and with them, by cascade, their deployments, names and deploys.
 
 #### Scenario: Purge
 - WHEN a project is removed with `--purge`
@@ -66,7 +68,7 @@ The system SHALL delete a purged project's row, and with it, by cascade, its dep
 ### Requirement: Migrations
 The system SHALL embed migrations as `NNNN_<name>.sql` and apply, at daemon start, each whose number is above the database's version, in order, each in its own transaction together with its `schema_version` row. The CLI does not migrate.
 
-[bug] `0002_app_org.sql` adds `github_app_org` as a second migration. `AGENTS.md` says a schema change rewrites `0001_init.sql`.
+[bug] `0002_app_org.sql` adds `github_app_org` as a second migration. `AGENTS.md` says a schema change rewrites `0001_init.sql`. The same rule excepts credentials GitHub issues once, and a migration is what kept the existing `projects` rows, so this may be the exception applied.
 
 #### Scenario: Fresh database
 - WHEN the daemon starts with no database file
@@ -87,8 +89,12 @@ Every CLI command that reads the database SHALL compare its schema version with 
 - WHEN the database is ahead of the binary
 - THEN the message is `database schema (v<n>) is newer than this binary (v<m>); upgrade the binary`
 
+[bug] `deploy`, `status` and `init` exit 1 with the message inside a stack trace. See the exit code note in [project.md](../project.md).
+
 ### Requirement: File ownership
 A CLI command run as root that opens the database SHALL set the owner of `boson.db`, `boson.db-wal` and `boson.db-shm` to `boson:boson` afterwards, so the daemon can write to them.
+
+[bug] `init` and `status` do this. `deploy` does it once before it starts following the log, and skips it when the request is refused or the daemon is unreachable. `uninstall` opens the database and does not do it, so an uninstall refused for active projects can leave root-owned `-wal` and `-shm` files.
 
 #### Scenario: Root runs status
 - WHEN root runs `boson status` and SQLite creates the `-wal` and `-shm` files
@@ -100,5 +106,5 @@ GitHub App private keys and webhook secrets are stored as plain text. `/var/lib/
 [bug] The comment in `0001_init.sql` says the database file is `0600`. No code sets the file's mode. The `0700` directory is what protects it.
 
 #### Scenario: Backing up
-- WHEN the operator copies `/var/lib/boson`
+- WHEN the operator copies `/var/lib/boson` with the daemon stopped, or takes the database with `VACUUM INTO`
 - THEN the copy is enough to restore every project without recreating its GitHub App

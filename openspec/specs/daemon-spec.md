@@ -17,8 +17,10 @@ The system SHALL, on start and in this order: create its data and log directorie
 - WHEN the database schema version is higher than the binary's
 - THEN the daemon exits 2 with a message telling the operator to upgrade the binary
 
+[bug] It exits 1 with the message inside a stack trace (see the exit code note in [project.md](../project.md)), and systemd restarts it every 2 seconds.
+
 ### Requirement: Public listener
-The system SHALL listen on `127.0.0.1:9000` and serve:
+The system SHALL listen on port 9000 of the loopback interface, IPv4 and IPv6, and serve:
 
 | Route | Purpose |
 |---|---|
@@ -49,7 +51,7 @@ The system SHALL listen on the unix socket `/var/lib/boson/boson.sock` and serve
 | `GET /declare/status/{org}/{name}` | `boson deploy` | 200 with phase `declaring`, `done` or `failed`. 404 when no declaration is known |
 | `POST /remove/{org}/{name}?purge=` | `boson remove` | 200 with the App settings URL. 404 for an unknown project |
 
-Bodies are JSON with camelCase keys. A refusal carries `{"error":"<reason>"}`, and the CLI prints that reason as it stands.
+Bodies are JSON with camelCase keys. A refusal carries `{"error":"<reason>"}`, and the CLI prints that reason as it stands. The 404s from the two status routes have no body.
 
 #### Scenario: Refused deploy
 - WHEN a deploy request is refused
@@ -69,8 +71,12 @@ The CLI SHALL report a daemon it cannot reach over the socket with `boson daemon
 - WHEN `boson deploy` is run while the daemon is stopped
 - THEN the command prints the unreachable message and exits 2
 
+[bug] A request that reaches the daemon and then times out raises a cancellation the client does not convert, so the command exits 1 and prints nothing while the daemon carries on.
+
 ### Requirement: Requests return before long work
 The system SHALL answer webhook, deploy and add requests before the work they start completes. Deploys, declarations and setup finalisation run on background tasks, and the CLI follows them by polling.
+
+[bug] Two requests do long work before answering, inside the client's 30 second timeout. A deploy request answers once the fetch and `_boson.yml` steps are done and the deploy row exists. A remove request runs `docker compose down` for every deployment and the Caddy synchronisation first.
 
 #### Scenario: Slow first clone
 - WHEN a declaration clones a large repository
@@ -89,6 +95,8 @@ The system SHALL, on SIGTERM or SIGINT, stop both listeners, wait up to 590 seco
 #### Scenario: Restart during a build
 - WHEN `systemctl restart boson` is run while a deploy is building
 - THEN the build finishes and its outcome is recorded before the daemon exits
+
+[bug] The unit sets no `KillMode`, and the server reports `KillMode=control-group`, under which systemd signals every process in the unit, including the `docker compose up --build` child. Whether a build survives that was not tested. The wait also covers deploys alone: expiry teardowns, declarations and setup finalisation are cut off at exit.
 
 #### Scenario: Deploy outlasts the wait
 - WHEN a deploy is still running after 590 seconds

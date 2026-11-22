@@ -43,7 +43,7 @@ The system SHALL trim `branch`, and trim and lowercase `hostname` and every alia
 - THEN the deployment serves `example.org`
 
 ### Requirement: Branch matching
-The system SHALL match a branch against entries from top to bottom and use the first that matches. An entry without `*` matches by exact, case-sensitive comparison. In an entry with `*`, each `*` stands for one or more characters, including `/`.
+The system SHALL match a branch against entries from top to bottom and use the first that matches. An entry without `*` matches by exact, case-sensitive comparison. In an entry with `*`, a `*` matches a run of characters, including `/`, and the branch must be at least as long as the pattern's literal text plus one character per `*`. With one `*`, that means it stands for one or more characters. With several, one of them can match nothing.
 
 #### Scenario: Named entry above a pattern
 - WHEN the file lists `main` and then `"*"`, and `main` is deployed
@@ -57,6 +57,10 @@ The system SHALL match a branch against entries from top to bottom and use the f
 - WHEN the entry is `feature/*` and the branch is `feature/`
 - THEN the entry does not match
 
+#### Scenario: Several wildcards
+- WHEN the entry is `a*b*c`
+- THEN `abxxc` matches, with the first `*` empty, and `abxc` does not, being too short
+
 #### Scenario: No entry matches
 - WHEN no entry matches the branch
 - THEN the branch has no deployment declared
@@ -67,6 +71,8 @@ The system SHALL replace `{branch}` in a hostname with the branch's slug. A patt
 #### Scenario: Pattern hostname
 - WHEN the entry is `branch: "*"`, `hostname: "{branch}.example.org"` and the branch is `develop`
 - THEN the hostname is `develop.example.org`
+
+[bug] `{branch}` is filled in for `hostname` and left as written in `aliases`. A pattern entry with an alias gives every matching branch the same alias, so the second branch collides with the first and its deploy crashes as described under Name uniqueness in [routing](routing-spec.md).
 
 ### Requirement: Branch slug
 The system SHALL reduce a branch name to a slug of `a-z`, `0-9` and `-`, at most 63 characters, as follows:
@@ -90,11 +96,11 @@ The system SHALL reduce a branch name to a slug of `a-z`, `0-9` and `-`, at most
 - THEN their slugs differ, because the first carries a hash suffix and the second is unchanged
 
 ### Requirement: Validation
-The system SHALL reject a file with the first problem found, in this order, and report it with the message shown.
+The system SHALL reject a file with the first problem found and report it with the message shown. The order is: parse, version, no entries, then for each entry from the top its branch, hostname, placeholder and duplicate-name checks, then `images.keep`.
 
 | Problem | Message |
 |---|---|
-| YAML does not parse | `_boson.yml does not parse: <parser message with line and column>` |
+| YAML does not parse, or a value has the wrong type | `_boson.yml does not parse: <YamlDotNet message>`. A wrong type reads `Exception during deserialization`. The message carries no line or column |
 | `version` is not 1 | `_boson.yml declares version <n>; this boson reads version 1` |
 | No entries | `_boson.yml declares no deployments` |
 | Entry without `branch` | `_boson.yml has a deployment with no branch` |
@@ -112,6 +118,8 @@ The system SHALL reject a file with the first problem found, in this order, and 
 - WHEN a deploy reads a file that fails validation
 - THEN the deploy fails before it builds, with the validation message as its error
 
+[bug] A key present with no value (`deployments:`, `aliases:`, `images:`, a bare `-` entry) throws a null reference out of the parser instead of producing a message. A deploy then crashes with no deploy row, and `boson add` reports `Object reference not set to an instance of an object.`
+
 ### Requirement: The file is the authority
 The system SHALL apply the matching entry's `hostname`, `aliases`, `env` and `expire_after` to the stored deployment on every deploy, and synchronise Caddy when any of them changed.
 
@@ -126,4 +134,4 @@ The system SHALL apply the matching entry's `hostname`, `aliases`, `env` and `ex
 #### Scenario: Entry removed from the file
 - WHEN a deployed branch's entry is removed and the branch is pushed
 - THEN the deploy fails with `_boson.yml no longer declares <branch>`
-- AND the deployment's containers keep running until `boson remove`
+- AND the deployment's containers keep running until `boson remove`, or until its stored `expire_after` elapses

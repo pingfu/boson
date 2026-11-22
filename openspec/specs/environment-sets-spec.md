@@ -13,6 +13,8 @@ The system SHALL resolve an environment set named `<set>` for repository `<org>/
 - WHEN the entries for `"*"` and `feature/*` both declare `env: preview`
 - THEN every deployment they produce reads `/var/lib/boson/env/<org>/<name>/preview`
 
+[bug] `env` is joined to the directory unchecked. A value such as `../other/production`, or an absolute path, resolves outside the project's directory, so a repository can name another project's set.
+
 ### Requirement: Named set must exist
 The system SHALL fail a deploy before running compose when the deployment names an environment set whose file does not exist, with an error naming the set, the branch and the path.
 
@@ -28,7 +30,7 @@ When an entry declares no `env`, the system SHALL pass the path of the set named
 - WHEN the entry has no `env` and no `default` file exists
 - THEN the deploy proceeds, with `BOSON_ENV_FILE` set to `/var/lib/boson/env/<org>/<name>/default`
 
-[bug] `BOSON_YML.md` says an entry without `env` gets no environment file. A `default` file on the host is handed to such a deployment through `BOSON_ENV_FILE`, and a compose file that declares `env_file: ${BOSON_ENV_FILE}` fails at `docker compose config` when the file is absent.
+[bug] `BOSON_YML.md` says an entry without `env` gets no environment file. A `default` file on the host is handed to such a deployment through `BOSON_ENV_FILE`, and when there is none, a compose file that declares `env_file: ${BOSON_ENV_FILE}` is given the path of a file that does not exist.
 
 ### Requirement: Compose variables
 The system SHALL supply these variables in the process environment of the `docker compose config` and `docker compose up` it runs for a deployment:

@@ -90,7 +90,9 @@ The system SHALL hold each hostname and alias for at most one active deployment,
 - WHEN a deploy would give a deployment a hostname or alias another active deployment holds
 - THEN the change is refused with a message naming the hostname, and nothing is built
 
-[bug] `Deployer.PrepareAsync` does not catch the `ProjectCollisionException` the repository throws. Nothing is built, but no failed deploy row is written, so `boson status` shows nothing. `boson deploy` prints `deploy request failed (500)` without the hostname, and a webhook deploy logs `webhook deploy task crashed`.
+[bug] `Deployer.PrepareAsync` does not catch the `ProjectCollisionException` the repository throws. Nothing is built, but no failed deploy row is written, so `boson status` does not show the failure. `boson deploy` prints `deploy request failed (500)` without the hostname and exits 2, and a webhook deploy logs `webhook deploy task crashed`.
+
+[bug] Nothing compares a declared hostname or alias with the control hostname. A deployment that declares it is served on that name for every path outside `/_boson/*`, the control hostname's 404 is never reached, and the name is covered by the control hostname's issuer policy, internal fallback included.
 
 #### Scenario: Name released
 - WHEN a deployment is archived

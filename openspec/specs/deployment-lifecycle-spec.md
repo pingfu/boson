@@ -7,7 +7,7 @@ A deployment that sits idle past its `expire_after` is stopped, and the images a
 ## Requirements
 
 ### Requirement: Expiry sweep
-The system SHALL sweep every active deployment every 15 minutes while the daemon runs, and tear down each whose idle time has reached its `expire_after`.
+The system SHALL sweep every active deployment every 15 minutes while the daemon runs, the first time 15 minutes after it starts, and tear down each whose idle time has reached its `expire_after`.
 
 #### Scenario: Idle preview
 - WHEN a deployment with `expire_after: 14d` last deployed successfully 15 days ago
@@ -27,6 +27,8 @@ The system SHALL read `expire_after` as a positive integer followed by `d` (days
 #### Scenario: Unreadable value
 - WHEN `expire_after` is `2w`
 - THEN the deployment does not expire
+
+[bug] `expire_after` is not validated when the file is read, and a number too large for a time span, such as `99999999d`, throws during the sweep. Each sweep then stops at that deployment, and no deployment after it in repository and branch order expires. Read from the code, not run.
 
 ### Requirement: Idle time
 The system SHALL measure idle time from the finish of the deployment's last successful deploy, or from the deployment's creation when none has succeeded.
@@ -50,7 +52,9 @@ The system SHALL tear a deployment down by running `docker compose --project-nam
 - WHEN an expired branch is pushed again and an entry still matches it
 - THEN a new deployment is created for it, reusing the checkout directory, and the push deploys
 
-[bug] When the expired deployment's hostname carries the App's webhook address, Caddy stops routing that hostname at teardown, so GitHub cannot deliver the push and no branch of the project deploys until the address is moved by hand.
+[bug] When the expired deployment's hostname carries the App's webhook address, Caddy stops routing that hostname at teardown, so GitHub cannot deliver pushes for any branch of the project. If it was the project's last deployment, `boson deploy <org/name>` declares again and resets the address. Otherwise the address has to be moved by hand.
+
+[bug] Teardown ignores the result of `docker compose down` and archives regardless. A failed Caddy synchronisation leaves the deployment archived and still routed, and ends that sweep.
 
 #### Scenario: Status after expiry
 - WHEN a deployment has expired
@@ -59,7 +63,9 @@ The system SHALL tear a deployment down by running `docker compose --project-nam
 ### Requirement: Image retention
 After a successful deploy, the system SHALL keep the newest `images.keep` commit-tagged builds of each image the deployment builds, counting the one just deployed, and remove the older ones with `docker image rm`.
 
-Retention applies to a service that has both `build` and `image` in the resolved compose configuration and whose image tag is the deployed commit's SHA. Among the image's existing tags, those that are 40 hex characters are candidates for removal.
+Retention applies to a service that has both `build` and `image` in the resolved compose configuration and whose image tag is the deployed commit's SHA. Among the image's existing tags, those that are 40 hex characters are candidates for removal. Newest is the order `docker images` lists them in.
+
+[bug] Retention counts per image name. Branches that build the same `my-app:${BOSON_COMMIT}` share one allowance of `images.keep`, so a preview branch's deploys remove the tags another branch's deployment would roll back to.
 
 #### Scenario: Fourth build with keep 3
 - WHEN `images.keep` is 3 and a fourth commit deploys an image tagged `my-app:${BOSON_COMMIT}`

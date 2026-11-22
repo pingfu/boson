@@ -32,7 +32,7 @@ The system SHALL refuse to uninstall while active projects exist, unless `--forc
 [bug] Uninstall runs no `docker compose down` for project deployments. With `--force`, their containers keep running with no daemon and no Caddy, and `--purge` deletes the checkouts underneath them.
 
 ### Requirement: Purge confirmation
-With `--purge`, the system SHALL ask the operator to type `destroy` before anything is torn down, and SHALL offer a final backup of the database.
+With `--purge`, the system SHALL ask the operator to type `destroy` before anything is torn down, and SHALL offer a final backup of the database when one exists.
 
 #### Scenario: Confirmation not given
 - WHEN the operator types anything other than `destroy`
@@ -41,6 +41,8 @@ With `--purge`, the system SHALL ask the operator to type `destroy` before anyth
 #### Scenario: Backup requested
 - WHEN the operator confirms and enters a backup path
 - THEN the database is written to that path with `VACUUM INTO` before teardown begins
+
+[bug] The backup is written as root with the default umask, outside the `0700` data directory, and holds every project's credentials. A path that already exists makes `VACUUM INTO` fail, and the command exits 1 with a stack trace.
 
 #### Scenario: Backup skipped
 - WHEN the operator confirms and enters an empty path
@@ -52,6 +54,8 @@ The system SHALL, in order: run `systemctl disable --now boson`, delete the unit
 #### Scenario: Compose down fails
 - WHEN taking the platform stack down exits non-zero
 - THEN the command prints a warning and continues
+
+[bug] The results of `systemctl` and `userdel` are discarded, and their `✓` lines print whether or not they worked.
 
 ### Requirement: State kept without purge
 Without `--purge`, the system SHALL leave the database, `/var/lib/boson`, `/var/log/boson`, `/srv` and the Caddy volumes in place, so that a later `boson init` restores the platform with its projects.
@@ -67,9 +71,12 @@ With `--purge` and after confirmation and teardown, the system SHALL delete each
 
 #### Scenario: A directory cannot be deleted
 - WHEN deleting a directory throws
-- THEN the command prints a warning naming it and continues
+- THEN the command prints a warning naming the directory, or the repository for a checkout, and continues
 
 #### Scenario: Projects existed
 - WHEN the purge completes on a host that had active projects
 - THEN the command prints each project's GitHub App settings URL for the operator to delete the App
-- AND prints `rm /usr/local/bin/boson` as the remaining step
+
+#### Scenario: Binary
+- WHEN any purge completes
+- THEN the command prints `rm /usr/local/bin/boson` as the remaining step

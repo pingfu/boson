@@ -23,11 +23,11 @@ The system SHALL determine whether the repository's owner is an organisation or 
 - THEN the add is refused with `GitHub has no account named <owner>`
 
 #### Scenario: GitHub cannot be asked
-- WHEN the lookup fails for any other reason, including rate limiting
+- WHEN GitHub answers with any other failure status, including rate limiting, or the request fails or times out
 - THEN the add is refused with a message telling the operator to re-run with `--owner org` or `--owner user`
 
 ### Requirement: Pending setup
-The system SHALL hold each setup in daemon memory, keyed by a state token of 16 random bytes in lowercase hex, and SHALL discard it 15 minutes after creation.
+The system SHALL hold each setup in daemon memory, keyed by a state token of 16 random bytes in lowercase hex, and SHALL discard it 15 minutes after `boson add` created it, whatever phase it has reached.
 
 #### Scenario: Setup abandoned
 - WHEN the operator never completes the browser flow
@@ -55,7 +55,9 @@ The manifest contains:
 
 #### Scenario: Live token
 - WHEN the operator opens the setup URL within 15 minutes
-- THEN the page is served with the manifest and the token embedded
+- THEN the page is served with the manifest and the token embedded, and submits itself to GitHub on load
+
+[bug] The page is served for a live token in any phase. Reloading it after the App exists submits the manifest again, and GitHub creates a second App whose callback answers 404.
 
 ### Requirement: Manifest callback
 The system SHALL handle `GET /_boson/setup-app/callback?code=<code>&state=<token>` by exchanging the code at `POST /app-manifests/<code>/conversions` for the App's id, slug, private key and webhook secret, and redirecting to `https://github.com/apps/<slug>/installations/new?state=<token>`.
@@ -80,11 +82,11 @@ The system SHALL handle `GET /_boson/setup-app/installed?state=<token>&installat
 - THEN finalisation starts and the success page is served without waiting for it
 
 #### Scenario: Repeat visit
-- WHEN the URL is opened again for a setup that has not failed
-- THEN the success page is served and finalisation is not started a second time
+- WHEN the URL is opened again for a setup past `awaiting_install` that has not failed
+- THEN the success page is served, the installation id given is ignored, and finalisation is not started a second time
 
-#### Scenario: Failed setup or missing installation id
-- WHEN the setup's phase is `failed`, the token is unknown, or `installation_id` is not a number
+#### Scenario: Refused
+- WHEN the setup's phase is `failed`, the manifest callback has not completed, the token is unknown, or `installation_id` is not a number
 - THEN the response is 404
 
 ### Requirement: Credential persistence
@@ -106,7 +108,9 @@ The system SHALL authenticate to GitHub as the App with an RS256 JWT signed by t
 - THEN each deploy mints its own installation token
 
 ### Requirement: Webhook address
-The system SHALL move the App's webhook address off the control hostname once the project has deployments, by `PATCH /app/hook/config` with `https://<hostname>/_boson/webhook/<org>/<name>`, where the hostname belongs to the default branch's deployment, or to the first active deployment when the default branch has none.
+At the end of a declaration that created deployments, the system SHALL make one attempt to move the App's webhook address off the control hostname, by `PATCH /app/hook/config`, authenticated with the App's JWT, with `https://<hostname>/_boson/webhook/<org>/<name>`. The hostname belongs to the default branch's deployment, or to the first active deployment by branch name when the default branch has none.
+
+[bug] This is the one place the address is set. A failed attempt is not retried, and deployments created later by pushes, hostname changes and teardowns leave the address where it was.
 
 #### Scenario: Default branch is deployed
 - WHEN declaration creates a deployment for the default branch

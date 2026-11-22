@@ -24,6 +24,8 @@ The system SHALL refuse an add when the platform is not initialised or the repos
 ### Requirement: Following the flow
 The system SHALL poll the daemon once a second for the setup's phase and print a line each time it changes. The daemon owns the flow, and interrupting the command stops the display.
 
+[bug] Interrupting `boson add` exits 1 with no output. `boson deploy` handles the same interruption with a message and exit 0.
+
 | Phase | Meaning |
 |---|---|
 | `awaiting_manifest` | Waiting for the App to be created on GitHub |
@@ -38,6 +40,8 @@ The system SHALL poll the daemon once a second for the setup's phase and print a
 #### Scenario: Setup expires or the daemon restarts
 - WHEN the daemon no longer knows the setup token
 - THEN the command reports that nothing was persisted and that an orphaned App is deleted by hand, and exits 2
+
+[bug] The 15 minutes run from `boson add`, and expiry ignores the phase. A setup still cloning at minute 15 is dropped while its finalisation carries on, so the command says nothing was persisted when the project is saved. A daemon restart after the save does the same. `boson add` then answers `repo already added`.
 
 ### Requirement: Declaration
 The system SHALL declare a saved project by minting an installation token, reading the repository's default branch from `GET /repos/<org>/<name>`, fetching that branch into `/srv/<org>/<name>/<slug>`, reading `_boson.yml` from the checkout, and creating one deployment for each entry that names a branch outright. Deployments of pattern entries are created by pushes.
@@ -65,7 +69,7 @@ The system SHALL stop a declaration, keeping the project and its App, when the r
 - THEN the error says the App is not installed on the owner or was not granted the repository, and gives both ways on: grant it and run `boson deploy`, or `boson remove --purge`, delete the App and add again
 
 #### Scenario: Fetch fails
-- WHEN the token mint or the git fetch fails for another reason
+- WHEN the token mint fails with any status, the repository lookup fails with anything but 404, or the git init, fetch or reset fails
 - THEN the error is `initial fetch failed: <reason>`
 
 #### Scenario: No file
@@ -77,14 +81,14 @@ The system SHALL stop a declaration, keeping the project and its App, when the r
 - THEN the error is the validation message from [boson-file](boson-file-spec.md)
 
 ### Requirement: Declaration warnings
-The system SHALL attach warnings to a successful declaration for conditions the operator has to act on.
+The system SHALL attach warnings to a successful declaration for conditions the operator has to act on. The DNS checks cover the hostname of each entry that names a branch outright. Aliases are not resolved.
 
 #### Scenario: Hostname does not resolve
-- WHEN a declared hostname has no DNS record
+- WHEN such a hostname resolves to no address
 - THEN a warning says to create the record, or Caddy will keep retrying certificate issuance
 
 #### Scenario: Hostname resolves elsewhere
-- WHEN a declared hostname resolves to an address on no local interface
+- WHEN such a hostname resolves to an address on no local interface
 - THEN a warning says so and that this is normal behind NAT
 
 #### Scenario: Default branch not declared
@@ -99,6 +103,8 @@ The system SHALL end the command according to the final phase.
 - THEN the command prints `✓ <org/name> added`, the warnings, and the next steps, and exits 0
 - AND the first step lists the path of every environment set `_boson.yml` names, or says none is named
 - AND the second step is `boson deploy <org/name>`
+
+[bug] When the file names more than one branch, that command is refused with `name one with --branch` and exits 3.
 
 #### Scenario: Fetch failed
 - WHEN the phase is `fetch_failed`

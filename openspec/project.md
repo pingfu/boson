@@ -82,5 +82,7 @@ A repository argument is trimmed, stripped of leading and trailing `/`, and lowe
 | 0 | Success |
 | 1 | User error: bad argument, unknown project, refused request |
 | 2 | Runtime failure: daemon unreachable, schema mismatch, failed deploy, failed host command |
-| 3 | Lock contention: another init, uninstall or deploy holds the lock |
+| 3 | Another init or uninstall holds the platform lock, or the daemon refused a deploy with 409: a deploy of that branch is running, or the project has several deployments and no `--branch` was given |
 | 99 | Internal error. The exception is printed with a request to file an issue |
+
+[bug] `Program.cs` maps a schema mismatch to 2 and an unexpected exception to 99, and neither mapping runs. System.CommandLine's default exception handler catches every exception a command lets escape, prints `Unhandled exception:` with a stack trace and exits 1. A cancelled or timed-out operation exits 1 and prints nothing. Reproduced with `boson deploy acme/site` against an empty data directory: stack trace, exit 1. `boson uninstall` catches the schema mismatch itself and does exit 2.

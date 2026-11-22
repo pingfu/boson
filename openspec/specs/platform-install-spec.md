@@ -7,7 +7,7 @@
 ## Requirements
 
 ### Requirement: Control hostname validation
-The system SHALL trim the control hostname, remove a trailing `.`, and lowercase it, and SHALL refuse a value that is empty or contains no `.`.
+The system SHALL trim the control hostname, remove trailing `.` characters, and lowercase it, and SHALL refuse a value that is empty or contains no `.`.
 
 #### Scenario: Hostname without a dot
 - WHEN the operator runs `boson init localhost`
@@ -35,7 +35,7 @@ The checks are:
 [bug] The remedy for the privilege check reads `sudo boson init <admin-hostname>`. The argument is named `control-hostname`.
 
 ### Requirement: Mutual exclusion with uninstall
-The system SHALL hold `/var/lib/boson/locks/_platform.lock` exclusively for the duration of `boson init`.
+The system SHALL hold `/var/lib/boson/locks/_platform.lock` exclusively from the end of preflight until `boson init` exits.
 
 #### Scenario: Another init or uninstall is running
 - WHEN the lock is held by another process
@@ -55,6 +55,8 @@ The system SHALL create the system user `boson` when it does not exist, with no 
 
 ### Requirement: Directories
 The system SHALL create `/var/lib/boson`, `/var/lib/boson/locks`, `/var/lib/boson/tmp`, `/var/log/boson`, `/var/log/boson/deploys` and `/srv`, and SHALL set `/var/lib/boson`, `/var/log/boson` and `/srv` to owner `boson:boson` recursively and mode `0700`.
+
+[bug] The results of `chown` and `chmod` are discarded, and `✓ directories in place` prints whether or not they worked.
 
 #### Scenario: Directories exist from an earlier install
 - WHEN the directories already exist and are owned by a different uid
@@ -94,7 +96,7 @@ The system SHALL poll `http://127.0.0.1:9000/_boson/health` every 500 ms for up 
 
 #### Scenario: Daemon never becomes healthy
 - WHEN no success response arrives within 10 seconds
-- THEN the command prints the HTTP status and body it last received, or the connection error
+- THEN the command makes one more request and prints its HTTP status and the first 300 characters of its body, or the exception type and message
 - AND prints `diagnose with: journalctl -u boson` and exits 2
 
 ### Requirement: Platform rows
@@ -123,6 +125,8 @@ The system SHALL wait up to 10 seconds for Caddy's admin API, then load the full
 #### Scenario: Admin API unreachable
 - WHEN the admin API does not answer within 10 seconds
 - THEN the command prints `caddy admin API not reachable within 10s` with `docker logs boson-caddy` as the diagnostic and exits 2
+
+[bug] A rejected configuration load throws out of the command, which exits 1 with a stack trace.
 
 ### Requirement: Hand-off
 The system SHALL finish by printing `https://<control-hostname>/_boson/health` as the URL that proves DNS, reachability and TLS, and exit 0.

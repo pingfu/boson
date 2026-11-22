@@ -17,6 +17,8 @@ The system SHALL read deployments and deploy history from the database, containe
 - WHEN the database schema does not match the binary
 - THEN the command prints the mismatch and its fix, and exits 2
 
+[bug] It exits 1 with the message inside a stack trace. See the exit code note in [project.md](../project.md).
+
 ### Requirement: Daemon line
 The system SHALL print the daemon's state on the `boson version` line and the control hostname as `https://<control-hostname>` on the `admin url` line.
 
@@ -42,10 +44,10 @@ The system SHALL print one row per active deployment, ordered by repository then
 | published port | The allocated loopback port |
 | branch | The branch name |
 | webhook | `active` or `inactive` |
-| containers | Container states with counts, sorted by state, such as `exited(1), running(2)` |
+| containers | Container states with counts, sorted by state, such as `restarting(1), running(2)`. `docker compose ps` is run without `--all`, so stopped containers are not counted |
 | last deploy | `#<id> <status> <sha, 7 characters> <timestamp> (<age>)`, or `never` |
 
-[bug] `BOSON_YML.md` says `boson status` reports why a deploy failed (invalid file, missing environment set). The table shows `failed` with no reason. The reason is in `--json` and the deploy log.
+[bug] `BOSON_YML.md` says `boson status` reports why a deploy failed (invalid file, missing environment set). The table shows `failed` with no reason. The reason is in `--json` and the deploy log. Failures that write no deploy row, listed in [deploy](deploy-spec.md), do not appear at all.
 
 #### Scenario: No deployments
 - WHEN no active deployment exists
@@ -68,7 +70,8 @@ The system SHALL warn for each deployment whose `deploy_pending` is set while it
 
 #### Scenario: Pending flag on an idle deployment
 - WHEN a deployment has `deploy_pending` set and its last deploy has finished
-- THEN the command prints that a push arrived that was never deployed, with `boson deploy <org/name>` as the recovery
+- THEN the command prints, after the table, `⚠ <org/name> <branch>: a push arrived that was never deployed. Recover with: boson deploy <org/name> --branch <branch>`
+- AND with `--json` the deployment's `deployPendingIdle` is true
 
 ### Requirement: JSON output
 With `--json`, the system SHALL print one indented JSON document with camelCase keys and exit 0:
