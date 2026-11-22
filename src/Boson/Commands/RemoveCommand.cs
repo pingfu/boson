@@ -49,15 +49,11 @@ public static class RemoveCommand
 
         if (result.Body is null)
         {
-            if ((int)result.Status == 404)
-            {
-                Console.Error.WriteLine($"unknown project: {repo}");
-                return ExitCodes.UserError;
-            }
-
+            // The daemon's own words, so a refusal it adds later is not
+            // reported as whatever this status last meant.
             Console.Error.WriteLine(result.Error ?? $"remove failed ({(int)result.Status})");
-            
-            return ExitCodes.RuntimeFailure;
+
+            return (int)result.Status == 404 ? ExitCodes.UserError : ExitCodes.RuntimeFailure;
         }
 
         Console.WriteLine(purge

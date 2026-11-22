@@ -23,6 +23,7 @@ public sealed class ProjectsRepository(Db db) : IProjectsRepository
         github_installation_id AS GithubInstallationId,
         github_webhook_secret AS GithubWebhookSecret,
         github_app_pem AS GithubAppPem,
+        github_app_org AS GithubAppOrg,
         created_at AS CreatedAt,
         updated_at AS UpdatedAt,
         archived_at AS ArchivedAt
@@ -52,10 +53,10 @@ public sealed class ProjectsRepository(Db db) : IProjectsRepository
             return conn.ExecuteScalar<long>("""
                 INSERT INTO projects
                   (repo, github_app_id, github_app_slug, github_installation_id,
-                   github_webhook_secret, github_app_pem)
+                   github_webhook_secret, github_app_pem, github_app_org)
                 VALUES
                   (@Repo, @GithubAppId, @GithubAppSlug, @GithubInstallationId,
-                   @GithubWebhookSecret, @GithubAppPem);
+                   @GithubWebhookSecret, @GithubAppPem, @GithubAppOrg);
                 SELECT last_insert_rowid();
                 """, p);
         }

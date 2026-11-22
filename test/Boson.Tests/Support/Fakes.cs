@@ -147,9 +147,23 @@ public sealed class FakeGithubClient : IGithubClient
     public string? WebhookUrlSet;
     public bool FailWebhookUrl;
 
+    public bool Organisation = true;
+    public Exception? FailOwnerLookup;
+    public int OwnerLookups;
+
+    public Task<bool> IsOrganisationAsync(string owner, CancellationToken ct = default)
+    {
+        OwnerLookups++;
+
+        return FailOwnerLookup is not null ? throw FailOwnerLookup : Task.FromResult(Organisation);
+    }
+
+    /// <summary>What reading the repository throws, the way an installation without access does.</summary>
+    public Exception? FailDefaultBranch;
+
     public Task<string> GetDefaultBranchAsync(
         string repo, string installationToken, CancellationToken ct = default) =>
-        Task.FromResult(DefaultBranch);
+        FailDefaultBranch is not null ? throw FailDefaultBranch : Task.FromResult(DefaultBranch);
 
     public Task SetWebhookUrlAsync(string jwt, string url, CancellationToken ct = default)
     {
@@ -163,9 +177,12 @@ public sealed class FakeGithubClient : IGithubClient
 public sealed class FakeCaddySynchroniser : ICaddySynchroniser
 {
     public int SyncCalls;
+    public Exception? Throw;
+
     public Task SyncAsync(CancellationToken ct = default)
     {
         Interlocked.Increment(ref SyncCalls);
+        if (Throw is not null) throw Throw;
         return Task.CompletedTask;
     }
 }

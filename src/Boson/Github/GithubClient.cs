@@ -15,6 +15,13 @@ public interface IGithubClient
     Task<InstallationToken> CreateInstallationTokenAsync(
         string jwt, long installationId, CancellationToken ct = default);
 
+    /// <summary>
+    /// GET /users/{owner}, unauthenticated: whether the account that owns a
+    /// repository is an organisation. It runs before any App exists, so there
+    /// is no credential to send.
+    /// </summary>
+    Task<bool> IsOrganisationAsync(string owner, CancellationToken ct = default);
+
     /// <summary>GET /repos/{repo}, for the branch the repository itself calls default.</summary>
     Task<string> GetDefaultBranchAsync(
         string repo, string installationToken, CancellationToken ct = default);
@@ -78,6 +85,20 @@ public sealed class GithubClient : IGithubClient
             root.GetProperty("expires_at").GetDateTimeOffset());
     }
 
+    public async Task<bool> IsOrganisationAsync(string owner, CancellationToken ct = default)
+    {
+        var response = await _http.GetAsync($"{BaseUrl}/users/{Uri.EscapeDataString(owner)}", ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+
+        if (!response.IsSuccessStatusCode)
+            throw new GithubApiException(
+                $"could not look up {owner} ({(int)response.StatusCode}): {body}", (int)response.StatusCode);
+
+        using var doc = JsonDocument.Parse(body);
+
+        return doc.RootElement.GetProperty("type").GetString() == "Organization";
+    }
+
     public async Task<string> GetDefaultBranchAsync(
         string repo, string installationToken, CancellationToken ct = default)
     {
@@ -89,7 +110,7 @@ public sealed class GithubClient : IGithubClient
 
         if (!response.IsSuccessStatusCode)
             throw new GithubApiException(
-                $"could not read {repo} ({(int)response.StatusCode}): {body}");
+                $"could not read {repo} ({(int)response.StatusCode}): {body}", (int)response.StatusCode);
 
         using var doc = JsonDocument.Parse(body);
 
@@ -114,4 +135,8 @@ public sealed class GithubClient : IGithubClient
     }
 }
 
-public sealed class GithubApiException(string message) : Exception(message);
+public sealed class GithubApiException(string message, int? status = null) : Exception(message)
+{
+    /// <summary>The HTTP status GitHub answered with, where a caller reads meaning into it.</summary>
+    public int? Status { get; } = status;
+}

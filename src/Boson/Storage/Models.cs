@@ -13,11 +13,20 @@ public sealed record Project
     public required long GithubInstallationId { get; init; }
     public required string GithubWebhookSecret { get; init; }
     public required string GithubAppPem { get; init; }
+
+    /// <summary>The organisation that owns the App, or null when a personal account does.</summary>
+    public string? GithubAppOrg { get; init; }
     public string? CreatedAt { get; init; }
     public string? UpdatedAt { get; init; }
     public string? ArchivedAt { get; init; }
 
-    public string AppSettingsUrl => $"https://github.com/settings/apps/{GithubAppSlug}";
+    /// <summary>
+    /// Where the App is deleted. An organisation's App has no page under the
+    /// operator's own settings, so the personal address is a 404 for it.
+    /// </summary>
+    public string AppSettingsUrl => GithubAppOrg is null
+        ? $"https://github.com/settings/apps/{GithubAppSlug}"
+        : $"https://github.com/organizations/{GithubAppOrg}/settings/apps/{GithubAppSlug}";
 }
 
 /// <summary>

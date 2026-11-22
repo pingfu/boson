@@ -61,6 +61,9 @@ public sealed class RpcClient : IDisposable
                 content: null, ct),
             RpcJson.Default.DeployStartResponse, ct);
 
+    public Task<RpcResult<DeclareStatusResponse>> DeclareStatusAsync(string repo, CancellationToken ct = default) =>
+        SendAsync(() => _http.GetAsync($"declare/status/{repo}", ct), RpcJson.Default.DeclareStatusResponse, ct);
+
     public Task<RpcResult<RemoveResponse>> RemoveAsync(string repo, bool purge, CancellationToken ct = default) =>
         SendAsync(
             () => _http.PostAsync($"remove/{repo}?purge={purge}", content: null, ct),

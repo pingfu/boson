@@ -11,17 +11,28 @@ public static class AddCommand
     {
         var repoArg = new Argument<string>("org/name") { Description = "GitHub repository" };
 
+        // The daemon asks GitHub, unauthenticated, and that lookup is rate
+        // limited per address. This is the way through when it is refused.
+        var ownerOpt = new Option<string?>("--owner")
+        {
+            Description = "Kind of account that owns the repository: org or user (default: ask GitHub)",
+        };
+
+        ownerOpt.AcceptOnlyFromAmong("org", "user");
+
         // Nothing else to pass: hostnames, branches and environment sets are in
         // the repository's own `_boson.yml`, which this command clones to read.
         var cmd = new Command("add", "Register a project: GitHub App manifest flow, clone, deployments from _boson.yml");
 
         cmd.Arguments.Add(repoArg);
-        cmd.SetAction((parseResult, ct) => RunAsync(parseResult.GetValue(repoArg)!, ct));
+        cmd.Options.Add(ownerOpt);
+        cmd.SetAction((parseResult, ct) =>
+            RunAsync(parseResult.GetValue(repoArg)!, parseResult.GetValue(ownerOpt), ct));
 
         return cmd;
     }
 
-    public static async Task<int> RunAsync(string repoInput, CancellationToken ct)
+    public static async Task<int> RunAsync(string repoInput, string? owner, CancellationToken ct)
     {
         if (!RepoName.TryCanonicalise(repoInput, out var repo))
         {
@@ -37,7 +48,7 @@ public static class AddCommand
         
         try
         {
-            start = await rpc.AddAsync(new AddRequest(repo), ct);
+            start = await rpc.AddAsync(new AddRequest(repo, owner), ct);
         }
         catch (DaemonUnreachableException e)
         {
@@ -116,6 +127,10 @@ public static class AddCommand
                     // Row persisted; the failure is printed and `boson deploy` retries.
                     PrintNextSteps(paths, repo, fetchFailed: true, status.Body.Error, status.Body.Warnings, status.Body.EnvSets);
                     return ExitCodes.Success;
+                case "declare_failed":
+                    foreach (var line in DeclareFailedLines(repo, status.Body.Error, status.Body.Warnings))
+                        Console.Error.WriteLine(line);
+                    return ExitCodes.RuntimeFailure;
                 case "failed":
                     Console.Error.WriteLine($"add failed: {status.Body.Error}");
                     Console.Error.WriteLine("nothing was persisted; re-run boson add to start over");
@@ -124,6 +139,24 @@ public static class AddCommand
 
             await Task.Delay(1000, ct);
         }
+    }
+
+    /// <summary>
+    /// What to say when the project was saved and declaring its deployments
+    /// then threw. The App and its keys are in the database, so `boson add`
+    /// would refuse the repo as already added: the way on is `boson deploy`,
+    /// and the way back is `boson remove`.
+    /// </summary>
+    internal static IEnumerable<string> DeclareFailedLines(string repo, string? error, string[] warnings)
+    {
+        yield return $"add stopped: {error}";
+
+        foreach (var warning in warnings)
+            yield return $"⚠ {warning}";
+
+        yield return $"{repo} and its GitHub App are saved, with no deployments yet.";
+        yield return $"  to continue: fix the above, then boson deploy {repo}";
+        yield return $"  to start over: boson remove {repo} --purge, delete the App at the URL it prints, then boson add {repo}";
     }
 
     private static void PrintNextSteps(

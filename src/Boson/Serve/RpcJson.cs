@@ -21,6 +21,7 @@ public sealed record WebhookAck(string Status);
 [JsonSerializable(typeof(AddRequest))]
 [JsonSerializable(typeof(AddStartResponse))]
 [JsonSerializable(typeof(AddStatusResponse))]
+[JsonSerializable(typeof(DeclareStatusResponse))]
 [JsonSerializable(typeof(DeployStartResponse))]
 [JsonSerializable(typeof(RemoveResponse))]
 [JsonSerializable(typeof(ErrorResponse))]

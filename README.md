@@ -150,6 +150,10 @@ Nothing else to pass: the repo's `_boson.yml` names the hostnames and branches, 
 
 `add` prints a setup URL; open it in any browser (your own machine is fine): you create a GitHub App for the project, then install it on the repo. Boson then clones the default branch into `/srv/org/my-app/<branch>/`, creates a deployment for every branch the file names outright, allocates each one a published port, and sets up routing and certificates. `boson status` shows what it made.
 
+The App is created under the account that owns the repo: the organisation when `org` is one, otherwise whichever personal account is signed in to GitHub in that browser. Boson asks GitHub which it is; if GitHub refuses the lookup, say so yourself with `--owner org` or `--owner user`.
+
+If the clone or the file fails, the App is kept and `add` prints why. Fix it, then `boson deploy org/my-app` picks up where `add` stopped.
+
 Ctrl-C stops the progress display, not the add: complete the browser steps and the project is added anyway (`boson status` shows it). Abandon the browser instead and nothing was saved; re-run the same command to start over.
 
 `add` fetches the code but doesn't deploy, so you can set up secrets first. It reads the repo's `_boson.yml` and prints the environment sets it names, one path per set. Each filename is the value you wrote after `env:`, so the `env: production` above means a file called `production`, filled in from the template the repo committed:

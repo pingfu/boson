@@ -23,6 +23,37 @@ public class MigratorTests
     }
 
     [Fact]
+    public void A_project_saved_before_the_app_org_column_is_a_personal_accounts_app()
+    {
+        using var db = new TempDb(migrate: false);
+
+        // The database as the first migration alone left it, holding a project.
+        var asm = typeof(Migrator).Assembly;
+        var init = asm.GetManifestResourceNames().Single(n => n.EndsWith("0001_init.sql"));
+
+        using (var reader = new StreamReader(asm.GetManifestResourceStream(init)!))
+        using (var conn = db.Db.Open())
+        {
+            conn.Execute(reader.ReadToEnd());
+            conn.Execute("INSERT INTO schema_version(version) VALUES (1)");
+            conn.Execute("""
+                INSERT INTO projects
+                  (repo, github_app_id, github_app_slug, github_installation_id,
+                   github_webhook_secret, github_app_pem)
+                VALUES ('acme/site', 1234, 'boson-site', 5678, 's3cret', 'pem')
+                """);
+        }
+
+        new Migrator(db.Db).MigrateToLatest();
+
+        var project = new ProjectsRepository(db.Db).GetByRepo("acme/site")!;
+
+        Assert.Null(project.GithubAppOrg);
+        Assert.Equal("pem", project.GithubAppPem);
+        Assert.Equal("https://github.com/settings/apps/boson-site", project.AppSettingsUrl);
+    }
+
+    [Fact]
     public void Migrate_is_idempotent()
     {
         using var db = new TempDb();
