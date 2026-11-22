@@ -120,9 +120,13 @@ public static class StatusCommand
 
         AnsiConsole.Write(table);
 
+        // The branch is named in the command because a project serving more
+        // than one refuses a bare `boson deploy <repo>`, and this warning is
+        // about one of them.
         foreach (var r in rows.Where(r => r.DeployPendingIdle))
             AnsiConsole.MarkupLine(
-                $"[yellow]⚠ {Markup.Escape(r.Repo)} {Markup.Escape(r.Branch)}: a push arrived that was never deployed — recover with: boson deploy {Markup.Escape(r.Repo)}[/]");
+                $"[yellow]⚠ {Markup.Escape(r.Repo)} {Markup.Escape(r.Branch)}: a push arrived that was never deployed. " +
+                $"Recover with: boson deploy {Markup.Escape(r.Repo)} --branch {Markup.Escape(r.Branch)}[/]");
 
         return ExitCodes.Success;
     }
