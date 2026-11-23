@@ -70,6 +70,49 @@ public class StatusCommandTests
         Assert.Contains("systemctl restart boson", text);
     }
 
+    private static StatusCommand.DaemonInfo Running(string version) => new(version, Now.AddHours(-3));
+
+    [Fact]
+    public void A_newer_release_is_named_at_the_end_of_the_line()
+    {
+        Assert.EndsWith("(0.1.41 available)", StatusCommand.DescribeDaemon(Running("0.1.40+97e9eb4"), Now, "0.1.41"));
+    }
+
+    [Theory]
+    [InlineData("0.1.40")]
+    [InlineData("0.1.39")]
+    [InlineData(null)]
+    [InlineData("nightly")]
+    public void Nothing_is_said_about_updates_when_there_is_none_to_name(string? latest)
+    {
+        // Null is GitHub not answering inside two seconds.
+        Assert.DoesNotContain("available", StatusCommand.DescribeDaemon(Running("0.1.40+97e9eb4"), Now, latest));
+    }
+
+    [Theory]
+    [InlineData("0.1.41", "0.1.40+97e9eb4", true)]
+    [InlineData("0.2.0", "0.1.40", true)]
+    [InlineData("0.1.100", "0.1.40", true)]
+    [InlineData("0.1.40", "0.1.40+97e9eb4", false)]
+    [InlineData("0.1.9", "0.1.40", false)]
+    [InlineData(null, "0.1.40", false)]
+    [InlineData("0.1.41", null, false)]
+    public void A_release_is_newer_by_its_numbers_not_its_text(string? latest, string? running, bool expected)
+    {
+        Assert.Equal(expected, StatusCommand.IsNewer(latest, running));
+    }
+
+    [Theory]
+    [InlineData("""{"tag_name":"v0.1.41","name":"0.1.41"}""", "0.1.41")]
+    [InlineData("""{"tag_name":"0.1.41"}""", "0.1.41")]
+    [InlineData("""{"message":"API rate limit exceeded"}""", null)]
+    [InlineData("""[]""", null)]
+    [InlineData("not json", null)]
+    public void The_latest_release_is_its_tag_without_the_v(string body, string? expected)
+    {
+        Assert.Equal(expected, StatusCommand.LatestFromJson(body));
+    }
+
     [Theory]
     [InlineData(0.5, "30m")]
     [InlineData(5, "5h 0m")]

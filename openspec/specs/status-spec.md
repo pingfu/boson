@@ -9,6 +9,8 @@
 ### Requirement: Sources
 The system SHALL read deployments and deploy history from the database, container state from `docker compose ps`, and the daemon's version and start time from `http://127.0.0.1:9000/_boson/health` with a 2 second timeout. The command works while the daemon is down.
 
+The system SHALL also ask `https://api.github.com/repos/pingfu/boson/releases/latest` for the latest release, without credentials, waiting no more than 2 seconds. The request runs alongside the others, so it adds nothing to the command's duration when GitHub answers promptly.
+
 #### Scenario: No database
 - WHEN `/var/lib/boson/boson.db` does not exist
 - THEN the command prints `no boson database found — run boson init first` and exits 1
@@ -27,6 +29,18 @@ The system SHALL print the daemon's state on the `boson version` line and the ad
 #### Scenario: Daemon down
 - WHEN nothing answers on the health endpoint
 - THEN the line reads `not responding — diagnose with: systemctl status boson`
+
+#### Scenario: Newer release available
+- WHEN the latest release of `pingfu/boson` on GitHub is newer than the running daemon
+- THEN the line ends with `(<version> available)`
+
+#### Scenario: Running the latest release
+- WHEN the latest release is the running version or older
+- THEN the line says nothing about updates
+
+#### Scenario: GitHub does not answer
+- WHEN the request fails, is refused, or has not answered within 2 seconds
+- THEN the line says nothing about updates and the rest of the output is unaffected
 
 #### Scenario: Binary replaced without a restart
 - WHEN the daemon's version differs from the CLI binary's
@@ -80,6 +94,7 @@ With `--json`, the system SHALL print one indented JSON document with camelCase 
 | `daemonRunning` | Whether the health endpoint answered |
 | `daemonVersion`, `daemonStartedAt` | As reported by the daemon, or null |
 | `cliVersion` | The version of the binary running the command |
+| `latestVersion` | The latest release on GitHub, or null when GitHub did not answer in time |
 | `deployments[]` | `repo`, `branch`, `hostname`, `aliases`, `port`, `webhookActive`, `containers`, `lastDeploy`, `deployPendingIdle` |
 | `deployments[].lastDeploy` | `id`, `status`, `commitSha`, `startedAt`, `finishedAt`, `logPath`, `error`, or null when the deployment has never deployed |
 

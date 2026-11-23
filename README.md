@@ -214,7 +214,7 @@ Exit codes: `0` success, `1` user error or an error boson did not expect (it pri
 
 `https://deploy.example.com/_boson/health` returns the running version. When it doesn't answer, `systemctl status boson` says why.
 
-`boson status` reports the daemon's version and the admin URL, then repo, hostname, published port, branch, webhook, container states and last deploy for every deployment, one hostname per line.
+`boson status` reports the daemon's version, whether a newer release is out, and the admin URL, then repo, hostname, published port, branch, webhook, container states and last deploy for every deployment, one hostname per line.
 
 For everything else, the usual tools work: `docker logs` for container output, `journalctl -u boson` for the daemon, `/var/log/boson/deploys/` for per-deploy build output.
 

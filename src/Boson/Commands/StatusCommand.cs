@@ -42,6 +42,10 @@ public static class StatusCommand
 
         var adminHostname = platform.Get(PlatformRepository.AdminHostname);
 
+        // Started now and collected after the listing, so asking GitHub costs
+        // no time of its own unless it is the slowest thing here.
+        var latestRelease = ProbeLatestReleaseAsync(ct);
+
         // The daemon's own version, not this binary's: they differ when a new
         // binary is installed and the restart hasn't happened yet, and the
         // daemon is the one serving webhooks.
@@ -70,17 +74,19 @@ public static class StatusCommand
 
         await DbOwnership.ChownToBosonAsync(new ProcessRunner(), paths.DbPath);
 
+        var latest = await latestRelease;
+
         if (json)
         {
             Console.WriteLine(JsonSerializer.Serialize(
                 new StatusEntry(adminHostname, daemon is not null, daemon?.Version,
-                    daemon?.StartedAt, VersionInfo.Version, rows),
+                    daemon?.StartedAt, VersionInfo.Version, latest, rows),
                 StatusJson.Default.StatusEntry));
 
             return ExitCodes.Success;
         }
 
-        AnsiConsole.MarkupLine($"boson version   [grey]{Markup.Escape(DescribeDaemon(daemon, now))}[/]");
+        AnsiConsole.MarkupLine($"boson version   [grey]{Markup.Escape(DescribeDaemon(daemon, now, latest))}[/]");
         AnsiConsole.MarkupLine($"admin url       [grey]{Markup.Escape(AdminUrl(adminHostname))}[/]");
         AnsiConsole.WriteLine();
 
@@ -168,7 +174,67 @@ public static class StatusCommand
         }
     }
 
-    internal static string DescribeDaemon(DaemonInfo? daemon, DateTimeOffset now)
+    public const string LatestReleaseUrl = "https://api.github.com/repos/pingfu/boson/releases/latest";
+
+    /// <summary>
+    /// The latest release's version, or null when GitHub does not say within
+    /// two seconds. A status command that hangs or fails because GitHub is
+    /// slow, rate limiting or unreachable would be worse than one that says
+    /// nothing about updates.
+    /// </summary>
+    private static async Task<string?> ProbeLatestReleaseAsync(CancellationToken ct)
+    {
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+
+        // GitHub refuses a request with no User-Agent.
+        http.DefaultRequestHeaders.UserAgent.Add(
+            new System.Net.Http.Headers.ProductInfoHeaderValue("boson", ShortenVersion(VersionInfo.Version).Split('+')[0]));
+        http.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+
+        try
+        {
+            return LatestFromJson(await http.GetStringAsync(LatestReleaseUrl, ct));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The release's tag without its leading `v`, or null when the body is not a release.</summary>
+    internal static string? LatestFromJson(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                   && doc.RootElement.TryGetProperty("tag_name", out var tag)
+                   && tag.ValueKind == JsonValueKind.String
+                   && tag.GetString()!.TrimStart('v', 'V') is { Length: > 0 } version
+                ? version
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="latest"/> is a later release than the one
+    /// running. Versions that do not read as numbers compare as not newer, so
+    /// an odd tag says nothing rather than something wrong.
+    /// </summary>
+    internal static bool IsNewer(string? latest, string? running)
+    {
+        static Version? Parse(string? text) =>
+            Version.TryParse(text?.Split('+', '-')[0].TrimStart('v', 'V'), out var parsed) ? parsed : null;
+
+        return Parse(latest) is { } l && Parse(running) is { } r && l > r;
+    }
+
+    internal static string DescribeDaemon(DaemonInfo? daemon, DateTimeOffset now, string? latest = null)
     {
         if (daemon?.Version is null)
             return "not responding — diagnose with: systemctl status boson";
@@ -183,6 +249,9 @@ public static class StatusCommand
         if (daemon.Version != VersionInfo.Version)
             text += $" — this binary is {ShortenVersion(VersionInfo.Version)}, " +
                     "finish the upgrade with: systemctl restart boson";
+
+        if (IsNewer(latest, daemon.Version))
+            text += $" ({latest} available)";
 
         return text;
     }
@@ -307,7 +376,7 @@ public static class StatusCommand
 
     internal sealed record StatusEntry(
         string? AdminHostname, bool DaemonRunning, string? DaemonVersion,
-        DateTimeOffset? DaemonStartedAt, string CliVersion,
+        DateTimeOffset? DaemonStartedAt, string CliVersion, string? LatestVersion,
         IReadOnlyList<DeploymentEntry> Deployments);
 
     internal sealed record DeploymentEntry(
