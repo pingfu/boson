@@ -466,7 +466,7 @@ public sealed class ManifestFlowOrchestratorTests : IDisposable
     }
 
     [Fact]
-    public async Task A_file_that_claims_the_control_hostname_declares_nothing()
+    public async Task A_file_that_claims_the_admin_hostname_declares_nothing()
     {
         // Routed, the name would serve this repository's app on every path
         // outside /_boson/*.
@@ -484,7 +484,7 @@ public sealed class ManifestFlowOrchestratorTests : IDisposable
         var status = _orchestrator.GetStatus(token)!;
 
         Assert.Equal("fetch_failed", status.Phase);
-        Assert.Contains("deploy.example.com is boson's control hostname", status.Error);
+        Assert.Contains("deploy.example.com is boson's admin hostname", status.Error);
         Assert.NotNull(_projects.GetByRepo(Repo));
         Assert.Empty(_deployments.ListActiveForRepo(Repo));
     }
@@ -526,29 +526,6 @@ public sealed class ManifestFlowOrchestratorTests : IDisposable
 
         Assert.Equal(0, Dapper.SqlMapper.ExecuteScalar<long>(
             conn, "SELECT count(*) FROM deployments WHERE archived_at IS NULL"));
-    }
-
-    [Fact]
-    public async Task A_project_removed_between_the_look_and_the_inserts_has_them_withdrawn()
-    {
-        var project = TestProjects.New(repo: Repo) with { Id = _projects.Insert(TestProjects.New(repo: Repo)) };
-
-        // The resolver runs inside the loop that inserts, after the first look.
-        _dns.ResolvesHost = _ =>
-        {
-            _projects.Archive(Repo);
-            return true;
-        };
-
-        var declaration = await _orchestrator.DeclareAsync(project);
-
-        Assert.Contains("was removed while it was being declared", declaration.Error);
-
-        using var conn = _db.Db.Open();
-
-        Assert.Equal(0, Dapper.SqlMapper.ExecuteScalar<long>(
-            conn, "SELECT count(*) FROM deployments WHERE archived_at IS NULL"));
-        Assert.Equal(0, Dapper.SqlMapper.ExecuteScalar<long>(conn, "SELECT count(*) FROM deployment_names"));
     }
 
     [Fact]

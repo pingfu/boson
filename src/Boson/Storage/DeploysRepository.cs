@@ -16,11 +16,8 @@ public interface IDeploysRepository
     DeployRow? GetLastSucceededForDeployment(long deploymentId);
     IReadOnlyList<DeployRow> ListForDeployment(long deploymentId);
 
-    /// <summary>
-    /// Every deploy of a deployment that got as far as a commit, newest first,
-    /// with how it ended. A failed one is listed because its image was built.
-    /// </summary>
-    IReadOnlyList<(string Sha, DeployStatus Status)> ListCommits(long deploymentId);
+    /// <summary>The commits a deployment has successfully deployed, newest first, each once.</summary>
+    IReadOnlyList<string> ListSucceededCommits(long deploymentId);
 
     /// <summary>
     /// Startup recovery: a 'running' row without a live daemon task
@@ -125,18 +122,16 @@ public sealed class DeploysRepository(Db db) : IDeploysRepository
             new { deploymentId }).ToList();
     }
 
-    public IReadOnlyList<(string Sha, DeployStatus Status)> ListCommits(long deploymentId)
+    public IReadOnlyList<string> ListSucceededCommits(long deploymentId)
     {
         using var conn = db.Open();
 
-        return conn.Query<DeployRow>(
-                $"""
-                SELECT {Columns} FROM deploys
-                WHERE deployment_id = @deploymentId AND commit_sha IS NOT NULL
-                ORDER BY id DESC
-                """, new { deploymentId })
-            .Select(row => (row.CommitSha!, row.Status))
-            .ToList();
+        return conn.Query<string>(
+            """
+            SELECT commit_sha FROM deploys
+            WHERE deployment_id = @deploymentId AND status = 'succeeded' AND commit_sha IS NOT NULL
+            ORDER BY id DESC
+            """, new { deploymentId }).Distinct().ToList();
     }
 
     public int MarkAllRunningAsFailed(string error)

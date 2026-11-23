@@ -42,18 +42,6 @@ public class ImageRetainerTests
     }
 
     [Fact]
-    public async Task A_torn_down_deployments_last_build_goes_with_the_rest()
-    {
-        _docker.ImageTags[Image] = [Sha(2), Sha(1), "stable"];
-
-        await new ImageRetainer(_docker).RemoveAsync(
-            Config($"{Image}:{Sha(2)}"), Sha(2), new HashSet<string> { Sha(2), Sha(1) },
-            _log.Add, CancellationToken.None);
-
-        Assert.Equal([$"{Image}:{Sha(2)}", $"{Image}:{Sha(1)}"], _docker.ImagesRemoved);
-    }
-
-    [Fact]
     public async Task A_commit_with_no_image_on_disk_is_not_asked_for()
     {
         _docker.ImageTags[Image] = [Sha(2)];

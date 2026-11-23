@@ -120,7 +120,7 @@ public class CaddyConfigBuilderTests
     }
 
     [Fact]
-    public void Control_hostname_falls_back_from_acme_to_caddys_own_ca()
+    public void Admin_hostname_falls_back_from_acme_to_caddys_own_ca()
     {
         // Verified against caddy:2-alpine: a private name is rejected by the CA
         // ("does not end with a valid public suffix") and the next issuer in the
@@ -136,7 +136,7 @@ public class CaddyConfigBuilderTests
     public void Project_hostnames_get_no_internal_fallback()
     {
         // A public site must fail loudly rather than quietly serve an untrusted
-        // certificate, so only the control hostname carries a policy.
+        // certificate, so only the admin hostname carries a policy.
         var policies = Build(TestProjects.Deployment(hostname: "example.org"))
             ["apps"]!["tls"]!["automation"]!["policies"]!.AsArray();
 

@@ -11,14 +11,6 @@ public interface IImageRetainer
     Task PruneAsync(
         string composeConfigJson, string tag, IReadOnlySet<string> removable, int keep,
         Action<string> log, CancellationToken ct);
-
-    /// <summary>
-    /// For a deployment that has been torn down: its containers are gone, so
-    /// the image of <paramref name="tag"/> goes too when it is removable.
-    /// </summary>
-    Task RemoveAsync(
-        string composeConfigJson, string tag, IReadOnlySet<string> removable,
-        Action<string> log, CancellationToken ct);
 }
 
 public sealed class ImageRetainer(IDockerCli docker) : IImageRetainer
@@ -28,31 +20,16 @@ public sealed class ImageRetainer(IDockerCli docker) : IImageRetainer
     /// image it builds. Any other tag on the same image name is left alone: a
     /// release label, an operator's rollback marker, or another branch's build.
     /// </summary>
-    public Task PruneAsync(
+    public async Task PruneAsync(
         string composeConfigJson, string tag, IReadOnlySet<string> removable, int keep,
-        Action<string> log, CancellationToken ct) =>
-        RemoveTagsAsync(composeConfigJson, tag, removable, keep, log, ct);
-
-    public Task RemoveAsync(
-        string composeConfigJson, string tag, IReadOnlySet<string> removable,
-        Action<string> log, CancellationToken ct) =>
-        RemoveTagsAsync(composeConfigJson, tag, removable, keep: null, log, ct);
-
-    /// <param name="keep">
-    /// Null once the deployment is torn down: nothing runs from the image of
-    /// <paramref name="tag"/> any more, and there is no retention to explain.
-    /// </param>
-    private async Task RemoveTagsAsync(
-        string composeConfigJson, string tag, IReadOnlySet<string> removable, int? keep,
         Action<string> log, CancellationToken ct)
     {
         foreach (var image in ComposeImages.Read(composeConfigJson))
         {
             if (image.Tag != tag)
             {
-                if (keep is not null)
-                    log($"image retention: {image.Service} builds {image.Reference}, " +
-                        $"so nothing is retained; tag it :${ComposeVariables.CommitVariable} to keep the last {keep}");
+                log($"image retention: {image.Service} builds {image.Reference}, " +
+                    $"so nothing is retained; tag it :${ComposeVariables.CommitVariable} to keep the last {keep}");
                 continue;
             }
 
@@ -66,8 +43,7 @@ public sealed class ImageRetainer(IDockerCli docker) : IImageRetainer
 
             var stale = tags.StdOut
                 .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Where(listed => IsFullShaTag(listed) && removable.Contains(listed))
-                .Where(listed => keep is null || listed != tag)
+                .Where(listed => IsFullShaTag(listed) && listed != tag && removable.Contains(listed))
                 .ToList();
 
             foreach (var old in stale)

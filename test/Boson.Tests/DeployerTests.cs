@@ -319,11 +319,10 @@ public class DeployerTests : IDisposable
     }
 
     [Fact]
-    public async Task Retention_leaves_a_commit_another_branch_still_keeps()
+    public async Task Retention_leaves_another_branchs_commits_alone()
     {
-        // Two branches building one image name share its tags. The oldest of
-        // this branch's commits is also what develop is running.
-        Deployed(_deployment, Sha4);
+        // Two branches building one image name share its tags. Sha4 is on
+        // disk and is develop's, and this branch never deployed it.
         Deployed(_deployment, Sha3);
         Deployed(_deployment, Sha2);
 
@@ -340,48 +339,7 @@ public class DeployerTests : IDisposable
     }
 
     [Fact]
-    public async Task Another_branch_is_protected_by_its_own_keep_not_the_deploying_branchs()
-    {
-        // This branch keeps one image. Develop's file keeps three, and its
-        // third is a commit this branch has outlived.
-        WriteBosonFile($"""
-            version: 1
-            deployments:
-              - branch: {Branch}
-                hostname: {TestProjects.Hostname}
-            images:
-              keep: 1
-            """);
-
-        WriteBosonFile("""
-            version: 1
-            deployments:
-              - branch: develop
-                hostname: develop.example.com
-            images:
-              keep: 3
-            """, branch: "develop");
-
-        var develop = TestProjects.Insert(
-            _projects, _deployments, branch: "develop", hostname: "develop.example.com", port: 30001);
-
-        Deployed(develop, Sha4);
-        Deployed(develop, Sha3);
-        Deployed(develop, Sha2);
-
-        Deployed(_deployment, Sha4);
-        Deployed(_deployment, "0000000500000000000000000000000000000000");
-
-        _docker.ImageTags["acme/site-web"] =
-            [_git.NextSha, "0000000500000000000000000000000000000000", Sha4];
-
-        await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
-
-        Assert.Equal(["acme/site-web:0000000500000000000000000000000000000000"], _docker.ImagesRemoved);
-    }
-
-    [Fact]
-    public async Task A_control_hostname_spelled_out_for_another_branch_stops_this_one_too()
+    public async Task A_admin_hostname_spelled_out_for_another_branch_stops_this_one_too()
     {
         // Refused for the file, not for the branch, so it is caught by
         // whichever deploy comes first and by `boson add` before any.
@@ -397,7 +355,7 @@ public class DeployerTests : IDisposable
                 aliases: [control.example.com]
             """);
 
-        Assert.Contains("control hostname", await FailureAsync());
+        Assert.Contains("admin hostname", await FailureAsync());
         Assert.Equal(0, _docker.UpCalls);
     }
 
@@ -467,7 +425,7 @@ public class DeployerTests : IDisposable
     }
 
     [Fact]
-    public async Task A_pattern_that_generates_the_control_hostname_stops_that_branch()
+    public async Task A_pattern_that_generates_the_admin_hostname_stops_that_branch()
     {
         // The one name that cannot be checked before the branch exists.
         _platform.Set(PlatformRepository.AdminHostname, "boson.example.com");
@@ -481,7 +439,7 @@ public class DeployerTests : IDisposable
 
         var result = await NewDeployer().DeployAsync(Repo, "boson", DeployTrigger.Webhook);
 
-        Assert.Contains("control hostname", Assert.IsType<DeployResult.Stopped>(result).Error);
+        Assert.Contains("admin hostname", Assert.IsType<DeployResult.Stopped>(result).Error);
         Assert.Null(_deployments.GetByBranch(Repo, "boson"));
     }
 
@@ -522,7 +480,7 @@ public class DeployerTests : IDisposable
     }
 
     [Fact]
-    public async Task A_change_that_cannot_be_put_back_is_still_a_failed_deploy_and_is_synced_by_the_next()
+    public async Task A_change_that_cannot_be_put_back_is_still_a_failed_deploy()
     {
         WriteBosonFile($"""
             version: 1
@@ -549,22 +507,11 @@ public class DeployerTests : IDisposable
         Assert.False(failed.Succeeded);
         Assert.Contains("caddy did not take the change", _deploys.Get(failed.LastDeployId)!.Error);
         Assert.Equal("renamed.example.com", Current().Hostname);
-
-        // Nothing in the file differs from the database now, and Caddy still
-        // has to be told.
-        _caddy.Throw = null;
-        var synced = _caddy.SyncCalls;
-
-        Assert.True(Assert.IsType<DeployResult.Completed>(
-            await deployer.DeployAsync(Repo, Branch, DeployTrigger.Manual)).Succeeded);
-        Assert.Equal(synced + 1, _caddy.SyncCalls);
     }
 
     [Fact]
-    public async Task The_image_of_a_deploy_that_built_and_then_failed_is_removed_by_the_next_that_works()
+    public async Task The_image_of_a_deploy_that_failed_is_left_for_the_operator_to_prune()
     {
-        // `up --build` tags the image before a container can fail to start, so
-        // a failed deploy leaves one, and only history knows whose it is.
         _docker.UpExitCode = 1;
         await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
         var failedSha = Rows()[^1].CommitSha!;
@@ -574,7 +521,7 @@ public class DeployerTests : IDisposable
 
         await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
 
-        Assert.Equal([$"acme/site-web:{failedSha}"], _docker.ImagesRemoved);
+        Assert.Empty(_docker.ImagesRemoved);
     }
 
     [Fact]
@@ -592,27 +539,6 @@ public class DeployerTests : IDisposable
         // keep: 3 is this deploy's commit, Sha2 and Sha3. A redeploy of Sha3
         // is one image, not two of the allowance.
         Assert.Equal([$"acme/site-web:{Sha4}"], _docker.ImagesRemoved);
-    }
-
-    [Fact]
-    public async Task A_commit_another_branch_is_deploying_right_now_is_left_alone()
-    {
-        // Its image exists before its container does, so Docker would let the
-        // removal through and that deploy would lose the image it just built.
-        Deployed(_deployment, Sha4);
-        Deployed(_deployment, Sha3);
-        Deployed(_deployment, Sha2);
-
-        var develop = TestProjects.Insert(
-            _projects, _deployments, branch: "develop", hostname: "develop.example.com", port: 30001);
-
-        _deploys.SetCommitSha(_deploys.Insert(develop.Id, DeployTrigger.Webhook, i => $"{i}.log"), Sha4);
-
-        _docker.ImageTags["acme/site-web"] = [_git.NextSha, Sha2, Sha3, Sha4];
-
-        await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
-
-        Assert.Empty(_docker.ImagesRemoved);
     }
 
     [Fact]
@@ -690,7 +616,7 @@ public class DeployerTests : IDisposable
     }
 
     [Fact]
-    public async Task A_deployment_cannot_take_the_control_hostname()
+    public async Task A_deployment_cannot_take_the_admin_hostname()
     {
         _platform.Set(PlatformRepository.AdminHostname, "control.example.com");
 
@@ -702,7 +628,7 @@ public class DeployerTests : IDisposable
                 aliases: [Control.example.com]
             """);
 
-        Assert.Contains("control hostname", await FailureAsync());
+        Assert.Contains("admin hostname", await FailureAsync());
         Assert.Equal(0, _docker.UpCalls);
         Assert.Empty(Current().AliasList);
     }
@@ -827,67 +753,16 @@ public class DeployerTests : IDisposable
     }
 
     [Fact]
-    public async Task Tearing_down_removes_the_images_the_deployment_built()
-    {
-        // Retention only ever runs on a deploy, so an expired preview branch
-        // would otherwise leave its last few images on the host for good.
-        Deployed(_deployment, Sha3);
-        Deployed(_deployment, Sha2);
-
-        _docker.ImageTags["acme/site-web"] = [Sha2, Sha3, "stable"];
-
-        await NewDeployer().TearDownAsync(_deployment);
-
-        Assert.Equal([$"acme/site-web:{Sha2}", $"acme/site-web:{Sha3}"], _docker.ImagesRemoved);
-    }
-
-    [Fact]
-    public async Task Tearing_down_removes_the_image_of_a_deploy_that_failed_too()
-    {
-        Deployed(_deployment, Sha2);
-
-        var failed = _deploys.Insert(_deployment.Id, DeployTrigger.Webhook, i => $"{i}.log");
-        _deploys.SetCommitSha(failed, Sha4);
-        _deploys.Finish(failed, succeeded: false, "docker compose up exited 1");
-
-        _docker.ImageTags["acme/site-web"] = [Sha4, Sha2];
-
-        await NewDeployer().TearDownAsync(_deployment);
-
-        Assert.Equal([$"acme/site-web:{Sha4}", $"acme/site-web:{Sha2}"], _docker.ImagesRemoved);
-    }
-
-    [Fact]
-    public async Task Tearing_down_leaves_an_image_another_deployment_still_keeps()
+    public async Task Tearing_down_leaves_the_images_for_the_operator_to_prune()
     {
         Deployed(_deployment, Sha3);
         Deployed(_deployment, Sha2);
-
-        var develop = TestProjects.Insert(
-            _projects, _deployments, branch: "develop", hostname: "develop.example.com", port: 30001);
-
-        Deployed(develop, Sha2);
 
         _docker.ImageTags["acme/site-web"] = [Sha2, Sha3];
 
         await NewDeployer().TearDownAsync(_deployment);
 
-        Assert.Equal([$"acme/site-web:{Sha3}"], _docker.ImagesRemoved);
-    }
-
-    [Fact]
-    public async Task A_teardown_that_cannot_remove_images_still_tears_down()
-    {
-        Deployed(_deployment, Sha2);
-
-        _docker.ImageTags["acme/site-web"] = [Sha2];
-        _docker.ConfigStdOut = _ => "this is not what compose prints";
-
-        await NewDeployer().TearDownAsync(_deployment);
-
-        Assert.Null(_deployments.GetByBranch(Repo, Branch));
         Assert.Empty(_docker.ImagesRemoved);
-        Assert.False(_locks.IsHeld(Deployer.LockKey(Repo, Branch)));
     }
 
     [Fact]

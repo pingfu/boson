@@ -33,20 +33,15 @@ public class InitCommandTests
     }
 
     [Fact]
-    public async Task Every_path_chown_named_is_reported_with_how_to_get_past_it()
+    public async Task The_path_chown_named_is_reported_with_what_to_do_next()
     {
-        // init is the recovery command too. `chown -R` carries on after a
-        // failure and names each path, and all of them are what the operator
-        // has to deal with before the re-run.
+        // init is the recovery command too, so a stop has to say where.
         var problem = await InitCommand.SecureDirectoriesAsync(
             Runner(new ProcessResult(1, "",
-                "chown: changing ownership of '/srv/a/locked': Operation not permitted\n" +
-                "chown: changing ownership of '/srv/b/mount': Read-only file system\n"), Ok()),
+                "chown: changing ownership of '/srv/a/locked': Operation not permitted\n"), Ok()),
             Directories);
 
         Assert.Contains("/srv/a/locked", problem);
-        Assert.Contains("/srv/b/mount", problem);
-        Assert.Contains("exited 1", problem);
         Assert.Contains("re-run boson init", problem);
     }
 

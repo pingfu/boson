@@ -29,7 +29,7 @@ public sealed class CaddySynchroniser(
         try
         {
             var admin = platform.Get(PlatformRepository.AdminHostname)
-                ?? throw new InvalidOperationException("control hostname not set; run boson init");
+                ?? throw new InvalidOperationException("admin hostname not set; run boson init");
             using var cfg = builder.Build(deployments.ListActive(), admin);
 
             await client.LoadConfigAsync(cfg, ct);

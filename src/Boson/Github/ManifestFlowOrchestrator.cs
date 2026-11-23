@@ -444,7 +444,7 @@ public sealed class ManifestFlowOrchestrator(
 
             // Fixed with a push like any other problem in the file, so it is
             // reported the same way and the project is kept.
-            var reserved = declared.ControlHostnameProblem(platform.Get(PlatformRepository.AdminHostname))
+            var reserved = declared.AdminHostnameProblem(platform.Get(PlatformRepository.AdminHostname))
                            ?? declared.Deployments
                                .Where(d => !d.IsPattern)
                                .Select(d => Deployer.ClaimedElsewhere(
@@ -484,16 +484,6 @@ public sealed class ManifestFlowOrchestrator(
                 throw;
             }
 
-            // Asked again now the rows exist, since the removal may have come
-            // between the first look and the inserts.
-            if (Removed(project))
-            {
-                foreach (var id in created) deployments.Archive(id);
-
-                await caddy.SyncAsync();
-
-                return new Declaration($"{repo} was removed while it was being declared", warnings, envSets);
-            }
 
             // The App was created pointing at the control plane, which GitHub
             // may not be able to reach. The webhook is repository-level, so any

@@ -10,7 +10,7 @@ public static class InitCommand
 {
     public static Command Create()
     {
-        var hostArg = new Argument<string>("control-hostname")
+        var hostArg = new Argument<string>("admin-hostname")
         {
             Description = "Hostname for boson's own control plane: /_boson/health and the " +
                           "browser-driven App setup flow. Never reached by GitHub, so it can be " +
@@ -32,7 +32,7 @@ public static class InitCommand
 
         if (string.IsNullOrWhiteSpace(adminHostname) || !adminHostname.Contains('.'))
         {
-            Console.Error.WriteLine($"invalid control hostname: {adminHostname}");
+            Console.Error.WriteLine($"invalid admin hostname: {adminHostname}");
             return ExitCodes.UserError;
         }
 
@@ -226,38 +226,15 @@ public static class InitCommand
             var chown = await runner.RunAsync("chown", ["-R", "boson:boson", dir], ct: ct);
 
             if (!chown.Ok)
-                return Stopped($"could not give everything under {dir} to the boson user", "chown -R boson:boson", dir, chown);
+                return $"could not give {dir} to the boson user; fix this and re-run boson init: {chown.StdErr.Trim()}";
 
             var chmod = await runner.RunAsync("chmod", ["0700", dir], ct: ct);
 
             if (!chmod.Ok)
-                return Stopped($"could not set {dir} to mode 0700", "chmod 0700", dir, chmod);
+                return $"could not set {dir} to mode 0700; fix this and re-run boson init: {chmod.StdErr.Trim()}";
         }
 
         return null;
-    }
-
-    /// <summary>
-    /// init is also the recovery command, so a stop here has to say enough to
-    /// get past it: every path the tool named, since `chown -R` carries on
-    /// after a failure and reports each one, the usual causes, and that
-    /// running it again is safe.
-    /// </summary>
-    private static string Stopped(string what, string command, string dir, ProcessResult result)
-    {
-        var reported = result.StdErr
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(line => $"    {line}");
-
-        return string.Join(Environment.NewLine,
-        [
-            $"✗ {what}; `{command} {dir}` exited {result.ExitCode}:",
-            .. reported,
-            "  The usual causes are a read-only or foreign mount under it (findmnt -R " + dir + ")",
-            "  and an immutable file (lsattr on the path named above).",
-            "  Fix or move what is named above, then re-run boson init: every step up to here is safe to repeat,",
-            "  and this run has not touched the daemon.",
-        ]);
     }
 
     private static async Task<bool> HealthOkAsync(CancellationToken ct)

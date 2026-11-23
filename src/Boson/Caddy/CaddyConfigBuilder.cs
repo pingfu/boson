@@ -8,7 +8,7 @@ namespace Boson.Caddy;
 /// Synthesises the whole structured-JSON config from DB state.
 /// Route order: control /_boson/* to daemon, then each deployment's alias
 /// redirects, reserved webhook path and proxy route, then the control
-/// catch-all 404. The control hostname can be private, because GitHub never
+/// catch-all 404. The admin hostname can be private, because GitHub never
 /// reaches it; a deployment's public hostname carries the repository webhook.
 /// </summary>
 public sealed class CaddyConfigBuilder
@@ -60,7 +60,7 @@ public sealed class CaddyConfigBuilder
                 dial: $"127.0.0.1:{d.Port}"));
         }
 
-        // Last, and only after every project route: the control hostname answers
+        // Last, and only after every project route: the admin hostname answers
         // /_boson/* and nothing else. Without this terminator a request to it
         // falls through to whatever Caddy matches next, which is a project's
         // catch-all proxy — the control plane would quietly serve someone's app.
@@ -79,7 +79,7 @@ public sealed class CaddyConfigBuilder
 
         var apps = new JsonObject
         {
-            // Issuers are tried in order, so the control hostname needs no
+            // Issuers are tried in order, so the admin hostname needs no
             // configuration either way: a public name gets a real ACME
             // certificate, and a private one (boson.enclave and the like) is
             // rejected by the CA in milliseconds — "does not end with a valid

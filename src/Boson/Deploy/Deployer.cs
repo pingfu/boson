@@ -69,11 +69,6 @@ public sealed class Deployer(
 
     private int _active;
 
-    // Set when the database holds a name Caddy was not told about and the
-    // change could not be put back. The next preparation, for any branch,
-    // synchronises before it builds.
-    private volatile bool _routesStale;
-
     public async Task<DeployResult> DeployAsync(
         string repo, string branch, DeployTrigger trigger,
         Action<long>? onStarted = null, CancellationToken ct = default)
@@ -297,7 +292,7 @@ public sealed class Deployer(
         // branch is the one name that cannot be known before the branch is.
         var control = platform.Get(PlatformRepository.AdminHostname);
 
-        if ((file.ControlHostnameProblem(control) ?? entry.ControlHostnameProblem(branch, control)) is { } reserved)
+        if ((file.AdminHostnameProblem(control) ?? entry.AdminHostnameProblem(branch, control)) is { } reserved)
             return Stop(existing, reserved, log);
 
         var hostname = entry.HostnameFor(branch);
@@ -354,7 +349,6 @@ public sealed class Deployer(
                 return Stop(null, $"caddy did not take the route for {hostname}: {e.Message}", log);
             }
 
-            _routesStale = false;
             existing = created;
         }
         else if (existing.Hostname != hostname || existing.Aliases != aliases
@@ -391,30 +385,15 @@ public sealed class Deployer(
                 catch (ProjectCollisionException)
                 {
                     // Another branch took the old name while Caddy was being
-                    // asked. The new values stay, with nothing to mark them as
-                    // a change, so the retry is owed by whichever deploy
-                    // prepares next.
-                    _routesStale = true;
+                    // asked. The new values stay and the routes catch up at
+                    // the next sync anything triggers. Accepted: see Scope in
+                    // openspec/project.md.
                 }
 
                 return Stop(before, $"caddy did not take the change to {hostname}: {e.Message}", log);
             }
 
-            _routesStale = false;
             existing = deployments.Get(existing.Id)!;
-        }
-        else if (_routesStale)
-        {
-            try
-            {
-                await caddy.SyncAsync(ct);
-            }
-            catch (Exception e) when (!ct.IsCancellationRequested)
-            {
-                return Stop(existing, $"caddy did not take the routes it is owed: {e.Message}", log);
-            }
-
-            _routesStale = false;
         }
 
         return new Preparation.Ready(existing, file, entry, checkoutDir, sha, log);
@@ -545,61 +524,13 @@ public sealed class Deployer(
     }
 
     /// <summary>
-    /// The commits whose images this deploy may delete: everything the
-    /// deployment has ever built, a failed deploy's image included since the
-    /// build finishes before `up` can fail, less the newest few that worked.
-    /// This deploy's own commit leads those because its row is still running
-    /// when retention happens.
+    /// The commits whose images this deploy may delete: the deployment's own
+    /// successful ones, past its newest few. This deploy's commit leads them
+    /// because its row is still running when retention happens. Everything
+    /// else on disk is the operator's to prune.
     /// </summary>
-    private HashSet<string> RemovableCommits(Deployment deployment, string sha, int keep)
-    {
-        var history = deploys.ListCommits(deployment.Id);
-
-        var kept = new[] { sha }
-            .Concat(history.Where(c => c.Status == DeployStatus.Succeeded).Select(c => c.Sha))
-            .Distinct()
-            .Take(keep);
-
-        return ComposeImages.Removable(history.Select(c => c.Sha), kept, KeptByOthers(deployment, keep));
-    }
-
-    /// <summary>
-    /// What every other active deployment keeps, each by the `images.keep` in
-    /// its own checkout: a branch keeping five must not lose two of them to a
-    /// branch that keeps three. A checkout that cannot say falls back to the
-    /// number the caller is working with. A commit another deployment is
-    /// deploying at this moment is kept too: its image exists before its
-    /// container does, and nothing else would stop the removal.
-    /// </summary>
-    private IEnumerable<IEnumerable<string>> KeptByOthers(Deployment deployment, int fallbackKeep) =>
-        deployments.ListActive()
-            .Where(d => d.Id != deployment.Id)
-            .Select(d =>
-            {
-                var history = deploys.ListCommits(d.Id);
-
-                return history
-                    .Where(c => c.Status == DeployStatus.Succeeded)
-                    .Select(c => c.Sha)
-                    .Distinct()
-                    .Take(KeepOf(d) ?? fallbackKeep)
-                    .Concat(history.Where(c => c.Status == DeployStatus.Running).Select(c => c.Sha));
-            })
-            .ToList();
-
-    private int? KeepOf(Deployment deployment)
-    {
-        try
-        {
-            return BosonFile.Find(paths.CheckoutDir(deployment.Repo, deployment.BranchSlug), out _)?.Images.Keep;
-        }
-        catch (Exception)
-        {
-            // Another branch's unreadable file is that branch's deploy to
-            // report, not a reason for this one to fail.
-            return null;
-        }
-    }
+    private HashSet<string> RemovableCommits(Deployment deployment, string sha, int keep) =>
+        ComposeImages.Removable(new[] { sha }.Concat(deploys.ListSucceededCommits(deployment.Id)), keep);
 
     public async Task TearDownAsync(Deployment deployment, CancellationToken ct = default)
     {
@@ -624,71 +555,11 @@ public sealed class Deployer(
             await caddy.SyncAsync(ct);
 
             logger.LogInformation("{Repo}#{Branch}: torn down", deployment.Repo, deployment.Branch);
-
-            // Last, and never fatal: the deployment is already stopped and
-            // unrouted, and a host that keeps a few images has lost nothing.
-            try
-            {
-                await RemoveImagesAsync(deployment, composeName, ct);
-            }
-            catch (Exception e) when (!ct.IsCancellationRequested)
-            {
-                logger.LogWarning(e, "{Repo}#{Branch}: could not remove its images", deployment.Repo, deployment.Branch);
-            }
         }
         finally
         {
             locks.Exit(key);
         }
-    }
-
-    /// <summary>
-    /// Removes the images a torn-down deployment built. Retention runs on
-    /// deploy and only over a deployment's own commits, so without this every
-    /// expired preview branch leaves its last few images on the host for good.
-    /// A commit another deployment still keeps is left for that deployment.
-    /// </summary>
-    private async Task RemoveImagesAsync(Deployment deployment, string composeName, CancellationToken ct)
-    {
-        var commits = deploys.ListCommits(deployment.Id).Select(c => c.Sha).Distinct().ToList();
-
-        if (commits.Count == 0) return;
-
-        // The image names are in the compose file, which is in the checkout
-        // that teardown leaves behind.
-        var checkoutDir = paths.CheckoutDir(deployment.Repo, deployment.BranchSlug);
-
-        if (!Directory.Exists(checkoutDir))
-        {
-            logger.LogWarning(
-                "{Repo}#{Branch}: images left in place, its checkout {Dir} is gone",
-                deployment.Repo, deployment.Branch, checkoutDir);
-            return;
-        }
-
-        var variables = new ComposeVariables(
-            deployment.Port, paths.EnvFile(deployment.Repo, deployment.EnvSet ?? BosonPaths.DefaultEnvSet),
-            commits[0], deployment.BranchSlug);
-
-        var config = await docker.ComposeConfigAsync(composeName, checkoutDir, variables, ct);
-
-        if (!config.Ok)
-        {
-            logger.LogWarning(
-                "{Repo}#{Branch}: images left in place, docker compose config: {Error}",
-                deployment.Repo, deployment.Branch, config.StdErr.Trim());
-            return;
-        }
-
-        // A torn-down deployment keeps none of its own, and its own number is
-        // only the fallback for another whose checkout cannot say.
-        var fallbackKeep = KeepOf(deployment) ?? new ImagesSection().Keep;
-
-        await imageRetainer.RemoveAsync(
-            config.StdOut, commits[0],
-            ComposeImages.Removable(commits, keptOwn: [], KeptByOthers(deployment, fallbackKeep)),
-            line => logger.LogInformation("{Repo}#{Branch}: {Line}", deployment.Repo, deployment.Branch, line),
-            ct);
     }
 
     private static void TryDelete(string dir)

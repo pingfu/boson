@@ -29,9 +29,9 @@ public sealed class BosonFile
     /// branch is deploying, so it is caught when the project is added rather
     /// than when the branch concerned is first pushed.
     /// </summary>
-    public string? ControlHostnameProblem(string? controlHostname) =>
+    public string? AdminHostnameProblem(string? adminHostname) =>
         Deployments
-            .Select(d => d.ControlHostnameProblem(controlHostname))
+            .Select(d => d.AdminHostnameProblem(adminHostname))
             .FirstOrDefault(problem => problem is not null);
 
     public static BosonFile? Find(string checkoutDir, out string? problem)
@@ -216,28 +216,28 @@ public sealed class DeploymentEntry
 
     /// <summary>
     /// Why this entry cannot be served for a branch, when one of its names is
-    /// the control hostname. Caddy would route that name to the deployment
+    /// the admin hostname. Caddy would route that name to the deployment
     /// for every path outside /_boson/*, and the control plane would be
     /// serving a repository's app.
     /// </summary>
-    public string? ControlHostnameProblem(string branch, string? controlHostname) =>
-        ControlHostnameProblem(Aliases.Append(HostnameFor(branch)), branch, controlHostname);
+    public string? AdminHostnameProblem(string branch, string? adminHostname) =>
+        AdminHostnameProblem(Aliases.Append(HostnameFor(branch)), branch, adminHostname);
 
     /// <summary>
     /// The same, for the names this entry spells out: its aliases, and its
     /// hostname unless that is a pattern's template, which names nothing until
     /// a branch fills it in.
     /// </summary>
-    public string? ControlHostnameProblem(string? controlHostname) =>
-        ControlHostnameProblem(IsPattern ? Aliases : Aliases.Append(Hostname), Branch, controlHostname);
+    public string? AdminHostnameProblem(string? adminHostname) =>
+        AdminHostnameProblem(IsPattern ? Aliases : Aliases.Append(Hostname), Branch, adminHostname);
 
-    private static string? ControlHostnameProblem(
-        IEnumerable<string> names, string branch, string? controlHostname)
+    private static string? AdminHostnameProblem(
+        IEnumerable<string> names, string branch, string? adminHostname)
     {
-        if (string.IsNullOrWhiteSpace(controlHostname)) return null;
+        if (string.IsNullOrWhiteSpace(adminHostname)) return null;
 
-        return names.Any(n => string.Equals(n, controlHostname, StringComparison.OrdinalIgnoreCase))
-            ? $"{BosonFile.FileName}: {controlHostname} is boson's control hostname, so {branch} " +
+        return names.Any(n => string.Equals(n, adminHostname, StringComparison.OrdinalIgnoreCase))
+            ? $"{BosonFile.FileName}: {adminHostname} is boson's admin hostname, so {branch} " +
               "cannot use it as a hostname or an alias"
             : null;
     }
