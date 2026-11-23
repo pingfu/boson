@@ -1,8 +1,5 @@
 using System.CommandLine;
 using Boson.Commands;
-using Boson.Github;
-using Boson.Serve;
-using Boson.Storage;
 
 namespace Boson;
 
@@ -20,40 +17,9 @@ public static class Program
         root.Subcommands.Add(UninstallCommand.Create());
         root.Subcommands.Add(ServeCommand.Create());
 
-        try
-        {
-            return await root.Parse(args).InvokeAsync();
-        }
-        catch (SchemaMismatchException e)
-        {
-            Console.Error.WriteLine(e.Message);
-            return ExitCodes.RuntimeFailure;
-        }
-        catch (BosonValidationException e)
-        {
-            Console.Error.WriteLine(e.Message);
-            return ExitCodes.UserError;
-        }
-        catch (ProjectCollisionException e)
-        {
-            Console.Error.WriteLine(e.Message);
-            return ExitCodes.UserError;
-        }
-        catch (DaemonUnreachableException e)
-        {
-            Console.Error.WriteLine(e.Message);
-            return ExitCodes.RuntimeFailure;
-        }
-        catch (OperationCanceledException)
-        {
-            return ExitCodes.RuntimeFailure;
-        }
-        catch (Exception e)
-        {
-            Console.Error.WriteLine("internal error — please file an issue at github.com/pingfu/boson:");
-            Console.Error.WriteLine(e.ToString());
-
-            return ExitCodes.InternalBug;
-        }
+        // An exception a command lets escape is System.CommandLine's to
+        // report: it prints "Unhandled exception:" with the stack trace and
+        // returns 1, before anything here could catch it.
+        return await root.Parse(args).InvokeAsync();
     }
 }
