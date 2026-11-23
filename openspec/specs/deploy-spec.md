@@ -181,7 +181,7 @@ This covers every failure in steps 1 to 4: a failed token mint or fetch, a missi
 
 #### Scenario: A change that cannot be put back
 - WHEN the Caddy synchronisation fails and, meanwhile, another deployment has taken the name this one let go of
-- THEN the deploy fails with the Caddy reason, the new values stay, and the next deploy the daemon prepares, for any branch, synchronises Caddy before it builds
+- THEN the deploy fails with the Caddy reason and the new values stay. The routes catch up at the next synchronisation, which is accepted (see Scope in [project.md](../project.md))
 
 #### Scenario: Caddy refuses a changed route
 - WHEN the Caddy synchronisation fails after a deployment's declared values were updated

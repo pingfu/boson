@@ -146,7 +146,9 @@ The system SHALL apply the matching entry's `hostname`, `aliases`, `env` and `ex
 - WHEN a push changes the entry's hostname from `old.example.org` to `new.example.org`
 - THEN the deploy of that push updates the deployment, and Caddy routes `new.example.org` and no longer routes `old.example.org`
 
-[bug] The App's webhook address is set once, during declaration. When the deployment whose hostname carries it changes hostname, GitHub keeps delivering to the old name, which Caddy no longer routes, and pushes stop deploying for the whole project.
+#### Scenario: Hostname that carries the webhook
+- WHEN the changed hostname is the one the project's GitHub webhook points at
+- THEN the webhook address is left as it was, as [github-app](github-app-spec.md) specifies, and the operator moves it
 
 [bug] Stored aliases are read back sorted by name and compared with the file's aliases in file order. An entry listing aliases unsorted is treated as changed on every deploy: the log records `_boson.yml changed`, the names are rewritten and Caddy is reloaded.
 

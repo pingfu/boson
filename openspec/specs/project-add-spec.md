@@ -7,14 +7,14 @@
 ## Requirements
 
 ### Requirement: Starting an add
-The system SHALL refuse an add when the platform is not initialised or the repository is already an active project, and otherwise SHALL return a setup URL `https://<control-hostname>/_boson/setup-app/start?state=<token>`.
+The system SHALL refuse an add when the platform is not initialised or the repository is already an active project, and otherwise SHALL return a setup URL `https://<admin-hostname>/_boson/setup-app/start?state=<token>`.
 
 #### Scenario: Repository already added
 - WHEN an active project exists for the repository
 - THEN the command prints `repo already added: <org/name>` and exits 1
 
 #### Scenario: Platform not initialised
-- WHEN no control hostname is stored
+- WHEN no admin hostname is stored
 - THEN the command prints `platform not initialised; run boson init first` and exits 1
 
 #### Scenario: Add accepted
@@ -49,8 +49,8 @@ The system SHALL declare a saved project by minting an installation token, readi
 Declarations run one at a time. A project that already has an active deployment is left as it is.
 
 #### Scenario: Project removed while it is being declared
-- WHEN `boson remove` archives or purges the project while its declaration is fetching or creating deployments
-- THEN the declaration stops with `<org/name> was removed while it was being declared`, and any deployment it had created is archived, releasing its hostname and port
+- WHEN `boson remove` archives or purges the project while its declaration is fetching
+- THEN the declaration stops with `<org/name> was removed while it was being declared` and creates no deployment
 
 #### Scenario: File names two branches and one pattern
 - WHEN `_boson.yml` has entries for `main`, `develop` and `"*"`

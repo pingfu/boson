@@ -2,7 +2,7 @@
 
 ## Purpose
 
-A deployment that sits idle past its `expire_after` is stopped, and the images a deployment builds are pruned to the last few.
+A deployment that sits idle past its `expire_after` is stopped, and after each successful deploy a deployment's own images are pruned to the last few.
 
 ## Requirements
 
@@ -62,7 +62,9 @@ The system SHALL tear a deployment down by running `docker compose --project-nam
 - WHEN an expired branch is pushed again and an entry still matches it
 - THEN a new deployment is created for it, reusing the checkout directory, and the push deploys
 
-[bug] When the expired deployment's hostname carries the App's webhook address, Caddy stops routing that hostname at teardown, so GitHub cannot deliver pushes for any branch of the project. If it was the project's last deployment, `boson deploy <org/name>` declares again and resets the address. Otherwise the address has to be moved by hand.
+#### Scenario: Expired deployment carried the webhook
+- WHEN the expired deployment's hostname is the one the project's GitHub webhook points at
+- THEN the webhook address is left as it was, as [github-app](github-app-spec.md) specifies. If it was the project's last deployment, `boson deploy <org/name>` declares again and sets the address. Otherwise the operator moves it
 
 [bug] Teardown ignores the result of `docker compose down` and archives regardless. A failed Caddy synchronisation leaves the deployment archived and still routed.
 
@@ -71,7 +73,9 @@ The system SHALL tear a deployment down by running `docker compose --project-nam
 - THEN `boson status` no longer lists it
 
 ### Requirement: Image retention
-After a successful deploy, the system SHALL keep the images of the deployment's newest `images.keep` successfully deployed commits, counting the one just deployed, and remove the images of every other commit it has deployed, including commits whose deploy failed after the image was built, with `docker image rm`. A commit that another active deployment keeps is left alone. What another deployment keeps is its own newest successful commits, counted by the `images.keep` in its own checkout's `_boson.yml`, or by the deploying branch's value when that file cannot be read, and any commit it is deploying at that moment.
+After a successful deploy, the system SHALL keep the images of the deployment's newest `images.keep` successfully deployed commits, counting the one just deployed, and remove the images of its older successfully deployed commits with `docker image rm`.
+
+Every other image is left for the operator, who clears them with `docker image prune -a`: those of failed deploys, of expired or removed deployments, and of other deployments. A deployment looks at its own history alone, so when two deployments deployed the same commit, either may remove its image once that commit is past its own `images.keep`. Docker refuses to remove an image a container is using.
 
 The commits come from the deployment's deploy history, each counted once. Retention applies to a service that has both `build` and `image` in the resolved compose configuration and whose image tag is the deployed commit's SHA. A tag is removed when it is on disk, is 40 hex characters, and names one of the removable commits.
 
@@ -81,19 +85,19 @@ The commits come from the deployment's deploy history, each counted once. Retent
 
 #### Scenario: Two branches building one image name
 - WHEN `main` and a preview branch both build `my-app:${BOSON_COMMIT}` and the preview branch deploys
-- THEN the tags of commits `main` deployed are left alone, unless the preview branch deployed the same commit and neither keeps it
+- THEN the tags of commits the preview branch never deployed are left alone
 
-#### Scenario: Branches that keep different numbers
-- WHEN `main` declares `images.keep: 5`, a preview branch declares `images.keep: 3`, and the preview branch deploys
-- THEN none of `main`'s newest five commits is removed
+#### Scenario: Commit two branches both deployed
+- WHEN `main` and `develop` both deployed commit X, `develop` still keeps it, and X passes out of `main`'s newest `images.keep`
+- THEN `main`'s next deploy removes X's tag unless a container is running from it, and `develop` rebuilds X if it is deployed there again
 
 #### Scenario: Deploy that built and then failed
 - WHEN a deploy builds `my-app:<sha>` and `docker compose up` then exits non-zero
-- THEN the next successful deploy of that deployment removes `my-app:<sha>`
+- THEN `my-app:<sha>` stays on disk until the operator prunes it
 
-#### Scenario: Commit another branch is deploying
-- WHEN a commit this deployment has outlived is being deployed by another deployment at that moment
-- THEN its tag is left alone
+#### Scenario: Expired deployment
+- WHEN a deployment expires or its project is removed
+- THEN the images it built stay on disk until the operator prunes them
 
 #### Scenario: Image not tagged with the commit
 - WHEN a built service's image tag is not the deployed commit
@@ -110,22 +114,3 @@ The commits come from the deployment's deploy history, each counted once. Retent
 #### Scenario: Removal fails
 - WHEN `docker image rm` fails for a tag
 - THEN the reason is written to the deploy log and the deploy still succeeds
-
-### Requirement: Images removed at teardown
-After tearing a deployment down, the system SHALL remove the images of every commit it deployed, successfully or not, for each image its compose file builds, leaving any commit another active deployment keeps, as defined under Image retention. The image names are read from the checkout teardown leaves behind. A failure here is logged and leaves the teardown complete.
-
-#### Scenario: Expired preview branch
-- WHEN a preview deployment that built `my-app:${BOSON_COMMIT}` for three commits expires
-- THEN the three tags are removed and the daemon log records each
-
-#### Scenario: Commit shared with another branch
-- WHEN the expired deployment's newest commit is also what `main` is running
-- THEN that tag is left alone
-
-#### Scenario: Compose file cannot be resolved
-- WHEN the checkout is missing, or `docker compose config` fails in it
-- THEN the images are left in place, the reason is logged, and the deployment stays torn down
-
-#### Scenario: Removal fails at teardown
-- WHEN `docker image rm` fails for a tag
-- THEN the reason is written to the daemon log and the deployment stays torn down

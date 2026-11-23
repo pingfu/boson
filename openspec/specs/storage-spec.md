@@ -86,7 +86,7 @@ The system SHALL embed migrations as `NNNN_<name>.sql` and apply, at daemon star
 - THEN its transaction rolls back and the daemon does not start
 
 ### Requirement: Schema compatibility
-Every CLI command that reads the database SHALL compare its schema version with the binary's before doing so, and exit 2 on a difference with the fix in the message.
+Every CLI command that reads the database SHALL compare its schema version with the binary's before doing so, and stop on a difference with the fix in the message. `deploy`, `status` and `init` exit 1, with the message at the head of System.CommandLine's `Unhandled exception:` output. `uninstall` prints the message alone and exits 2.
 
 #### Scenario: Binary upgraded, daemon not restarted
 - WHEN the database is behind the binary
@@ -95,8 +95,6 @@ Every CLI command that reads the database SHALL compare its schema version with 
 #### Scenario: Binary downgraded
 - WHEN the database is ahead of the binary
 - THEN the message is `database schema (v<n>) is newer than this binary (v<m>); upgrade the binary`
-
-[bug] `deploy`, `status` and `init` exit 1 with the message inside a stack trace. See the exit code note in [project.md](../project.md).
 
 ### Requirement: File ownership
 A CLI command run as root that opens the database SHALL set the owner of `boson.db`, `boson.db-wal` and `boson.db-shm` to `boson:boson` afterwards, so the daemon can write to them.

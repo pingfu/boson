@@ -130,7 +130,7 @@ Pattern entries name a different set from production, or they hand every branch 
 
 ## Images
 
-`images.keep` is how many of a deployment's commits keep their images, counting the one just deployed. Tagging with `${BOSON_COMMIT}` is what makes retention possible: each build gets a name of its own instead of overwriting `latest`, so the last few commits stay deployable without a rebuild, and after a successful deploy the images of that deployment's older commits are removed. Branches that build the same image name each keep their own: a commit one branch still keeps is left alone by the others.
+`images.keep` is how many of a deployment's commits keep their images, counting the one just deployed. Tagging with `${BOSON_COMMIT}` is what makes retention possible: each build gets a name of its own instead of overwriting `latest`, so the last few commits stay deployable without a rebuild, and after a successful deploy the images of that deployment's older commits are removed. Images from failed deploys and from expired or removed deployments stay on disk: clear them with `docker image prune -a`.
 
 Retention only touches images a deploy tagged with the commit it built. A service running an image someone else published is left alone.
 
@@ -138,7 +138,7 @@ Retention only touches images a deploy tagged with the commit it built. A servic
 
 A push deploys the branch it names, if an entry matches it.
 
-`expire_after` measures from the last successful deploy, so an active branch never expires, and a branch whose recent deploys all failed is not kept alive by them. The daemon sweeps every fifteen minutes. On expiry the containers stop, the hostname and port are released and the images the deployment built are removed, while the checkout stays: a later push redeploys the branch rather than starting from nothing.
+`expire_after` measures from the last successful deploy, so an active branch never expires, and a branch whose recent deploys all failed is not kept alive by them. The daemon sweeps every fifteen minutes. On expiry the containers stop and the hostname and port are released, while the checkout stays: a later push redeploys the branch rather than starting from nothing.
 
 An expired deployment leaves `boson status`, since it holds nothing any more. What stopped it is in `journalctl -u boson`.
 
@@ -157,7 +157,7 @@ The file is read after fetch and before build, alongside the check on what compo
 - `env` names a set that does not exist on the host, or is not a plain file name
 - `expire_after` is not a number followed by `d`, `h` or `m`
 - a hostname or alias is not a plain DNS name
-- a hostname or alias is the hostname given to `boson init`, which boson's messages call the control hostname
+- a hostname or alias is boson's admin hostname, the one given to `boson init`
 - no entry matches the branch a deploy was asked for
 
 A push to a branch no entry matches deploys nothing, which is not an error: a repository decides which of its branches are deployed.

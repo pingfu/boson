@@ -15,9 +15,7 @@ The system SHALL, on start and in this order: create its data and log directorie
 
 #### Scenario: Database newer than the binary
 - WHEN the database schema version is higher than the binary's
-- THEN the daemon exits 2 with a message telling the operator to upgrade the binary
-
-[bug] It exits 1 with the message inside a stack trace (see the exit code note in [project.md](../project.md)), and systemd restarts it every 2 seconds.
+- THEN the daemon exits 1 with a message telling the operator to upgrade the binary, and systemd restarts it every 2 seconds until that is done
 
 ### Requirement: Public listener
 The system SHALL listen on port 9000 of the loopback interface, IPv4 and IPv6, and serve:

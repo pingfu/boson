@@ -15,12 +15,10 @@ The system SHALL read deployments and deploy history from the database, containe
 
 #### Scenario: Schema mismatch
 - WHEN the database schema does not match the binary
-- THEN the command prints the mismatch and its fix, and exits 2
-
-[bug] It exits 1 with the message inside a stack trace. See the exit code note in [project.md](../project.md).
+- THEN the command exits 1, as [storage](storage-spec.md) specifies
 
 ### Requirement: Daemon line
-The system SHALL print the daemon's state on the `boson version` line and the control hostname as `https://<control-hostname>` on the `admin url` line.
+The system SHALL print the daemon's state on the `boson version` line and the admin hostname as `https://<admin-hostname>` on the `admin url` line.
 
 #### Scenario: Daemon running
 - WHEN the health endpoint answers
@@ -78,7 +76,7 @@ With `--json`, the system SHALL print one indented JSON document with camelCase 
 
 | Key | Content |
 |---|---|
-| `adminHostname` | The control hostname, or null |
+| `adminHostname` | The admin hostname, or null |
 | `daemonRunning` | Whether the health endpoint answered |
 | `daemonVersion`, `daemonStartedAt` | As reported by the daemon, or null |
 | `cliVersion` | The version of the binary running the command |

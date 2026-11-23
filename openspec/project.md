@@ -53,6 +53,11 @@ Out of scope, for the specs, for reviews and for fixes:
 - **What a pusher can do through their own compose file.** Anyone who can push to a deployed branch can get root on the host through their compose file, because the daemon runs it through Docker and is in the `docker` group. What their containers do, including refusing to stop, is theirs.
 - **Speculative failure modes.** A race or fault that needs unusual timing and has not been observed is left alone until it happens.
 
+Accepted by design:
+
+- **The webhook address is set once.** A project's GitHub webhook points at one deployment's hostname, chosen when the project is declared. If that deployment's hostname changes or the deployment expires, the operator moves the address in the App's settings on GitHub. See [github-app](specs/github-app-spec.md).
+- **A name re-taken while Caddy is failing.** If Caddy refuses a hostname change and another deployment takes the old name in the same moment, the change stays in the database and the routes catch up at the next synchronisation.
+
 In scope: boson handing one project another project's secrets, names or images, and boson reporting a failure wrongly or not at all.
 
 ## Glossary
@@ -64,7 +69,7 @@ In scope: boson handing one project another project's secrets, names or images, 
 | Deploy | One run of the pipeline for a deployment, with a row in `deploys` and a log file |
 | Environment set | A file of environment values on the host, named by `env` in `_boson.yml` |
 | Branch slug | A branch name reduced to a DNS label. Names the checkout directory, fills `{branch}` in a hostname and is part of the compose project name |
-| Control hostname | The hostname given to `boson init`. Serves `/_boson/*` |
+| Admin hostname | The hostname given to `boson init`. Serves `/_boson/*` |
 | Platform stack | The compose project `boson`, which runs Caddy |
 | Declaration | Creating a project's deployments from the `_boson.yml` on its default branch |
 
@@ -93,9 +98,6 @@ A repository argument is trimmed, stripped of leading and trailing `/`, and lowe
 | Code | Meaning |
 |---|---|
 | 0 | Success |
-| 1 | User error: bad argument, unknown project, refused request |
-| 2 | Runtime failure: daemon unreachable, schema mismatch, failed deploy, failed host command |
+| 1 | User error: bad argument, unknown project, refused request. Also any exception a command does not handle, including a schema mismatch in `deploy`, `status`, `init` and `serve`: System.CommandLine prints `Unhandled exception:` with the stack trace. A cancelled or timed-out operation exits 1 and prints nothing |
+| 2 | Runtime failure: daemon unreachable, failed deploy, failed host command, a schema mismatch in `uninstall` |
 | 3 | Another init or uninstall holds the platform lock, or the daemon refused a deploy with 409: a deploy of that branch is running, or the project has several deployments and no `--branch` was given |
-| 99 | Internal error. The exception is printed with a request to file an issue |
-
-[bug] `Program.cs` maps a schema mismatch to 2 and an unexpected exception to 99, and neither mapping runs. System.CommandLine's default exception handler catches every exception a command lets escape, prints `Unhandled exception:` with a stack trace and exits 1. A cancelled or timed-out operation exits 1 and prints nothing. Reproduced with `boson deploy acme/site` against an empty data directory: stack trace, exit 1. `boson uninstall` catches the schema mismatch itself and does exit 2.

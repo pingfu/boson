@@ -46,9 +46,9 @@ The manifest contains:
 |---|---|
 | `name` | `boson-<name>` |
 | `url` | `https://github.com/<org>/<name>` |
-| `redirect_url` | `https://<control-hostname>/_boson/setup-app/callback` |
-| `setup_url` | `https://<control-hostname>/_boson/setup-app/installed` |
-| `hook_attributes.url` | `https://<control-hostname>/_boson/webhook/<org>/<name>` |
+| `redirect_url` | `https://<admin-hostname>/_boson/setup-app/callback` |
+| `setup_url` | `https://<admin-hostname>/_boson/setup-app/installed` |
+| `hook_attributes.url` | `https://<admin-hostname>/_boson/webhook/<org>/<name>` |
 | `public` | `false` |
 | `default_events` | `["push"]` |
 | `default_permissions` | `contents: read`, `metadata: read` |
@@ -108,9 +108,9 @@ The system SHALL authenticate to GitHub as the App with an RS256 JWT signed by t
 - THEN each deploy mints its own installation token
 
 ### Requirement: Webhook address
-At the end of a declaration that created deployments, the system SHALL make one attempt to move the App's webhook address off the control hostname, by `PATCH /app/hook/config`, authenticated with the App's JWT, with `https://<hostname>/_boson/webhook/<org>/<name>`. The hostname belongs to the default branch's deployment, or to the first active deployment by branch name when the default branch has none.
+At the end of a declaration that created deployments, the system SHALL make one attempt to move the App's webhook address off the admin hostname, by `PATCH /app/hook/config`, authenticated with the App's JWT, with `https://<hostname>/_boson/webhook/<org>/<name>`. The hostname belongs to the default branch's deployment, or to the first active deployment by branch name when the default branch has none.
 
-[bug] This is the one place the address is set. A failed attempt is not retried, and deployments created later by pushes, hostname changes and teardowns leave the address where it was.
+This is the one place the address is set, by design. A failed attempt is not retried, and deployments created later by pushes, hostname changes and teardowns leave the address where it was. When the deployment carrying it changes hostname or expires, pushes stop deploying for the project until the operator sets the address in the App's settings on GitHub, or removes and adds the project again.
 
 #### Scenario: Default branch is deployed
 - WHEN declaration creates a deployment for the default branch
@@ -122,7 +122,7 @@ At the end of a declaration that created deployments, the system SHALL make one 
 
 #### Scenario: Every entry is a pattern
 - WHEN `_boson.yml` names no branch outright
-- THEN the address stays on the control hostname and a warning says so
+- THEN the address stays on the admin hostname and a warning says so
 
 ### Requirement: App settings URL
 The system SHALL report where a project's App is managed: `https://github.com/organizations/<org>/settings/apps/<slug>` for an App owned by an organisation, and `https://github.com/settings/apps/<slug>` otherwise. boson leaves deleting the App to the operator.

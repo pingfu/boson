@@ -2,16 +2,16 @@
 
 ## Purpose
 
-`boson init <control-hostname>` installs the platform on a host: the `boson` system user, the directories, the daemon under systemd, and Caddy. Re-running it rebuilds everything derived from the database.
+`boson init <admin-hostname>` installs the platform on a host: the `boson` system user, the directories, the daemon under systemd, and Caddy. Re-running it rebuilds everything derived from the database.
 
 ## Requirements
 
-### Requirement: Control hostname validation
-The system SHALL trim the control hostname, remove trailing `.` characters, and lowercase it, and SHALL refuse a value that is empty or contains no `.`.
+### Requirement: Admin hostname validation
+The system SHALL trim the admin hostname, remove trailing `.` characters, and lowercase it, and SHALL refuse a value that is empty or contains no `.`.
 
 #### Scenario: Hostname without a dot
 - WHEN the operator runs `boson init localhost`
-- THEN the command prints `invalid control hostname: localhost` and exits 1
+- THEN the command prints `invalid admin hostname: localhost` and exits 1
 - AND nothing on the host is changed
 
 ### Requirement: Preflight
@@ -31,8 +31,6 @@ The checks are:
 - WHEN Docker is not running and git is not installed
 - THEN the command lists both problems, each with what needs it and the command that fixes it
 - AND prints `No changes were made.` and exits 1
-
-[bug] The remedy for the privilege check reads `sudo boson init <admin-hostname>`. The argument is named `control-hostname`.
 
 ### Requirement: Mutual exclusion with uninstall
 The system SHALL hold `/var/lib/boson/locks/_platform.lock` exclusively from the end of preflight until `boson init` exits.
@@ -58,7 +56,7 @@ The system SHALL create `/var/lib/boson`, `/var/lib/boson/locks`, `/var/lib/boso
 
 #### Scenario: Mode cannot be set
 - WHEN `chown` or `chmod` exits non-zero for a directory
-- THEN the command prints the directory, the command that failed and its exit code, every line the tool reported, the usual causes with the command that shows each, and that re-running is safe
+- THEN the command prints one line naming the directory, the tool's error and that `boson init` is to be re-run once it is fixed
 - AND exits 2 without touching the daemon
 
 #### Scenario: Directories exist from an earlier install
@@ -106,7 +104,7 @@ The system SHALL poll `http://127.0.0.1:9000/_boson/health` every 500 ms for up 
 The system SHALL check the database schema against the binary, then store `admin_hostname`, `installed_at` (UTC, ISO 8601) and `binary_version` in the `platform` table.
 
 #### Scenario: Re-run with a different hostname
-- WHEN init is re-run with another control hostname
+- WHEN init is re-run with another admin hostname
 - THEN `admin_hostname` is replaced and the Caddy configuration pushed afterwards uses the new name
 
 ### Requirement: Platform stack
@@ -119,7 +117,7 @@ The stack is compose project `boson` with one service: `caddy:2-alpine`, contain
 - THEN the command prints `docker compose up failed for the platform stack: <stderr>` and exits 2
 
 ### Requirement: Caddy bootstrap
-The system SHALL wait up to 10 seconds for Caddy's admin API, then load the full configuration built from the control hostname and every active deployment, as specified in [routing](routing-spec.md).
+The system SHALL wait up to 10 seconds for Caddy's admin API, then load the full configuration built from the admin hostname and every active deployment, as specified in [routing](routing-spec.md).
 
 #### Scenario: Recovery on a host with projects
 - WHEN init is re-run on a host whose database holds active deployments
@@ -132,7 +130,7 @@ The system SHALL wait up to 10 seconds for Caddy's admin API, then load the full
 [bug] A rejected configuration load throws out of the command, which exits 1 with a stack trace.
 
 ### Requirement: Hand-off
-The system SHALL finish by printing `https://<control-hostname>/_boson/health` as the URL that proves DNS, reachability and TLS, and exit 0.
+The system SHALL finish by printing `https://<admin-hostname>/_boson/health` as the URL that proves DNS, reachability and TLS, and exit 0.
 
 #### Scenario: Successful install
 - WHEN every step succeeds

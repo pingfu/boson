@@ -65,7 +65,7 @@ The system SHALL, in order: run `systemctl disable --now boson`, delete the unit
 Without `--purge`, the system SHALL leave the database, `/var/lib/boson`, `/var/log/boson`, `/srv` and the Caddy volumes in place, so that a later `boson init` restores the platform with its projects.
 
 #### Scenario: Uninstall then init
-- WHEN the operator runs `boson uninstall --force` and later `boson init <control-hostname>`
+- WHEN the operator runs `boson uninstall --force` and later `boson init <admin-hostname>`
 - THEN every project and its GitHub App credentials are present after the init
 
 ### Requirement: Purge
