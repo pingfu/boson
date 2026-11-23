@@ -505,6 +505,53 @@ public sealed class ManifestFlowOrchestratorTests : IDisposable
     }
 
     [Fact]
+    public async Task A_project_removed_while_it_is_being_declared_gets_no_deployments()
+    {
+        // `boson remove` does not wait for a clone. Deployments made for the
+        // archived project would be hidden from every listing and still hold
+        // their hostname and port, for good.
+        var project = TestProjects.New(repo: Repo) with { Id = _projects.Insert(TestProjects.New(repo: Repo)) };
+
+        _git.OnFetch = _ =>
+        {
+            _projects.Archive(Repo);
+            return Task.CompletedTask;
+        };
+
+        var declaration = await _orchestrator.DeclareAsync(project);
+
+        Assert.Contains("was removed while it was being declared", declaration.Error);
+
+        using var conn = _db.Db.Open();
+
+        Assert.Equal(0, Dapper.SqlMapper.ExecuteScalar<long>(
+            conn, "SELECT count(*) FROM deployments WHERE archived_at IS NULL"));
+    }
+
+    [Fact]
+    public async Task A_project_removed_between_the_look_and_the_inserts_has_them_withdrawn()
+    {
+        var project = TestProjects.New(repo: Repo) with { Id = _projects.Insert(TestProjects.New(repo: Repo)) };
+
+        // The resolver runs inside the loop that inserts, after the first look.
+        _dns.ResolvesHost = _ =>
+        {
+            _projects.Archive(Repo);
+            return true;
+        };
+
+        var declaration = await _orchestrator.DeclareAsync(project);
+
+        Assert.Contains("was removed while it was being declared", declaration.Error);
+
+        using var conn = _db.Db.Open();
+
+        Assert.Equal(0, Dapper.SqlMapper.ExecuteScalar<long>(
+            conn, "SELECT count(*) FROM deployments WHERE archived_at IS NULL"));
+        Assert.Equal(0, Dapper.SqlMapper.ExecuteScalar<long>(conn, "SELECT count(*) FROM deployment_names"));
+    }
+
+    [Fact]
     public async Task Failed_conversion_marks_the_flow_failed_and_persists_nothing()
     {
         _github.FailConversion = true;

@@ -16,6 +16,12 @@ public abstract record DeployResult
 
     /// <summary>The branch exists and `_boson.yml` says nothing about it.</summary>
     public sealed record NotDeclared : DeployResult;
+
+    /// <summary>
+    /// It ended before any deploy row existed, for a branch with no deployment
+    /// to record the failure against. The reason is all there is.
+    /// </summary>
+    public sealed record Stopped(string Error) : DeployResult;
 }
 
 public interface IDeployer
@@ -62,6 +68,11 @@ public sealed class Deployer(
     internal const int MaxPasses = 3;
 
     private int _active;
+
+    // Set when the database holds a name Caddy was not told about and the
+    // change could not be put back. The next preparation, for any branch,
+    // synchronises before it builds.
+    private volatile bool _routesStale;
 
     public async Task<DeployResult> DeployAsync(
         string repo, string branch, DeployTrigger trigger,
@@ -111,9 +122,14 @@ public sealed class Deployer(
                 if (prepared is Preparation.Failed failure)
                 {
                     // No deployment row exists to hang the failure on, so the
-                    // daemon log is the only record there can be.
+                    // daemon log is the only record there can be. A caller
+                    // that is waiting gets the reason too: with no deploy id
+                    // to follow, it has nothing else to show.
                     logger.LogWarning("{Repo}#{Branch}: {Error}", repo, branch, failure.Error);
-                    return new DeployResult.Completed(lastId, false, passes);
+
+                    return passes == 1
+                        ? new DeployResult.Stopped(failure.Error)
+                        : new DeployResult.Completed(lastId, false, passes);
                 }
 
                 if (prepared is Preparation.Broken broken)
@@ -246,11 +262,14 @@ public sealed class Deployer(
         // turned into a failed deploy with its reason. Thrown instead, it
         // leaves the task crashed: no deploy row, no log, nothing in `boson
         // status`, and a bare 500 for whoever ran `boson deploy`.
+        //
+        // A timeout counts: HttpClient reports one as a cancellation, and
+        // nothing here was cancelled unless the caller's own token says so.
         try
         {
             file = BosonFile.Find(checkoutDir, out problem);
         }
-        catch (Exception e) when (e is not OperationCanceledException)
+        catch (Exception e) when (!ct.IsCancellationRequested)
         {
             return Stop(existing, $"{BosonFile.FileName} could not be read: {e.Message}", log);
         }
@@ -325,7 +344,7 @@ public sealed class Deployer(
             {
                 await caddy.SyncAsync(ct);
             }
-            catch (Exception e) when (e is not OperationCanceledException)
+            catch (Exception e) when (!ct.IsCancellationRequested)
             {
                 // Withdrawn, or the next deploy would find the deployment in
                 // place, see nothing to change, skip the sync and build a site
@@ -335,6 +354,7 @@ public sealed class Deployer(
                 return Stop(null, $"caddy did not take the route for {hostname}: {e.Message}", log);
             }
 
+            _routesStale = false;
             existing = created;
         }
         else if (existing.Hostname != hostname || existing.Aliases != aliases
@@ -359,17 +379,42 @@ public sealed class Deployer(
             {
                 await caddy.SyncAsync(ct);
             }
-            catch (Exception e) when (e is not OperationCanceledException)
+            catch (Exception e) when (!ct.IsCancellationRequested)
             {
                 // Put back for the same reason a new deployment is withdrawn:
                 // the next deploy has to see the change again to retry it.
-                deployments.SetDeclared(
-                    before.Id, before.Hostname, before.Aliases, before.EnvSet, before.ExpireAfter);
+                try
+                {
+                    deployments.SetDeclared(
+                        before.Id, before.Hostname, before.Aliases, before.EnvSet, before.ExpireAfter);
+                }
+                catch (ProjectCollisionException)
+                {
+                    // Another branch took the old name while Caddy was being
+                    // asked. The new values stay, with nothing to mark them as
+                    // a change, so the retry is owed by whichever deploy
+                    // prepares next.
+                    _routesStale = true;
+                }
 
                 return Stop(before, $"caddy did not take the change to {hostname}: {e.Message}", log);
             }
 
+            _routesStale = false;
             existing = deployments.Get(existing.Id)!;
+        }
+        else if (_routesStale)
+        {
+            try
+            {
+                await caddy.SyncAsync(ct);
+            }
+            catch (Exception e) when (!ct.IsCancellationRequested)
+            {
+                return Stop(existing, $"caddy did not take the routes it is owed: {e.Message}", log);
+            }
+
+            _routesStale = false;
         }
 
         return new Preparation.Ready(existing, file, entry, checkoutDir, sha, log);
@@ -500,27 +545,46 @@ public sealed class Deployer(
     }
 
     /// <summary>
-    /// The commits whose images this deploy may delete. This deploy's own
-    /// commit leads the deployment's history because its row is still running
+    /// The commits whose images this deploy may delete: everything the
+    /// deployment has ever built, a failed deploy's image included since the
+    /// build finishes before `up` can fail, less the newest few that worked.
+    /// This deploy's own commit leads those because its row is still running
     /// when retention happens.
     /// </summary>
     private HashSet<string> RemovableCommits(Deployment deployment, string sha, int keep)
     {
-        var own = new[] { sha }.Concat(deploys.ListSucceededCommits(deployment.Id));
+        var history = deploys.ListCommits(deployment.Id);
 
-        return ComposeImages.Removable(own, keep, KeptByOthers(deployment, keep));
+        var kept = new[] { sha }
+            .Concat(history.Where(c => c.Status == DeployStatus.Succeeded).Select(c => c.Sha))
+            .Distinct()
+            .Take(keep);
+
+        return ComposeImages.Removable(history.Select(c => c.Sha), kept, KeptByOthers(deployment, keep));
     }
 
     /// <summary>
     /// What every other active deployment keeps, each by the `images.keep` in
     /// its own checkout: a branch keeping five must not lose two of them to a
     /// branch that keeps three. A checkout that cannot say falls back to the
-    /// number the caller is working with.
+    /// number the caller is working with. A commit another deployment is
+    /// deploying at this moment is kept too: its image exists before its
+    /// container does, and nothing else would stop the removal.
     /// </summary>
     private IEnumerable<IEnumerable<string>> KeptByOthers(Deployment deployment, int fallbackKeep) =>
         deployments.ListActive()
             .Where(d => d.Id != deployment.Id)
-            .Select(d => deploys.ListSucceededCommits(d.Id).Take(KeepOf(d) ?? fallbackKeep))
+            .Select(d =>
+            {
+                var history = deploys.ListCommits(d.Id);
+
+                return history
+                    .Where(c => c.Status == DeployStatus.Succeeded)
+                    .Select(c => c.Sha)
+                    .Distinct()
+                    .Take(KeepOf(d) ?? fallbackKeep)
+                    .Concat(history.Where(c => c.Status == DeployStatus.Running).Select(c => c.Sha));
+            })
             .ToList();
 
     private int? KeepOf(Deployment deployment)
@@ -567,7 +631,7 @@ public sealed class Deployer(
             {
                 await RemoveImagesAsync(deployment, composeName, ct);
             }
-            catch (Exception e) when (e is not OperationCanceledException)
+            catch (Exception e) when (!ct.IsCancellationRequested)
             {
                 logger.LogWarning(e, "{Repo}#{Branch}: could not remove its images", deployment.Repo, deployment.Branch);
             }
@@ -586,7 +650,7 @@ public sealed class Deployer(
     /// </summary>
     private async Task RemoveImagesAsync(Deployment deployment, string composeName, CancellationToken ct)
     {
-        var commits = deploys.ListSucceededCommits(deployment.Id);
+        var commits = deploys.ListCommits(deployment.Id).Select(c => c.Sha).Distinct().ToList();
 
         if (commits.Count == 0) return;
 
@@ -594,7 +658,13 @@ public sealed class Deployer(
         // that teardown leaves behind.
         var checkoutDir = paths.CheckoutDir(deployment.Repo, deployment.BranchSlug);
 
-        if (!Directory.Exists(checkoutDir)) return;
+        if (!Directory.Exists(checkoutDir))
+        {
+            logger.LogWarning(
+                "{Repo}#{Branch}: images left in place, its checkout {Dir} is gone",
+                deployment.Repo, deployment.Branch, checkoutDir);
+            return;
+        }
 
         var variables = new ComposeVariables(
             deployment.Port, paths.EnvFile(deployment.Repo, deployment.EnvSet ?? BosonPaths.DefaultEnvSet),
@@ -616,7 +686,7 @@ public sealed class Deployer(
 
         await imageRetainer.RemoveAsync(
             config.StdOut, commits[0],
-            ComposeImages.Removable(commits, keep: 0, KeptByOthers(deployment, fallbackKeep)),
+            ComposeImages.Removable(commits, keptOwn: [], KeptByOthers(deployment, fallbackKeep)),
             line => logger.LogInformation("{Repo}#{Branch}: {Line}", deployment.Repo, deployment.Branch, line),
             ct);
     }

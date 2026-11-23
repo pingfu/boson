@@ -55,7 +55,7 @@ Bodies are JSON with camelCase keys. A refusal carries `{"error":"<reason>"}`, a
 
 #### Scenario: Refused deploy
 - WHEN a deploy request is refused
-- THEN the response body states the reason, and `boson deploy` prints it and exits 1 for a 404, 3 for a 409 and 2 otherwise
+- THEN the response body states the reason, and `boson deploy` prints it and exits 1 for a 404, 3 for a 409 and 2 otherwise, which includes the 422 for a deploy that stopped before it had a row
 
 ### Requirement: Socket access
 The system SHALL delete a socket file left by an earlier process before binding, and set the socket's mode to `0660` once bound. Permission to open the socket is the RPC's authentication.

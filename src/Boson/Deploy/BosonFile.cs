@@ -73,6 +73,10 @@ public sealed class BosonFile
         return problem is null ? file : null;
     }
 
+    private static string NotAHostname(string name, string branch) =>
+        $"{FileName}: \"{name}\" is not a hostname boson can serve for {branch}; write a DNS name " +
+        "made of letters, digits, '-' and '.', such as example.org";
+
     private static string? Validate(BosonFile file)
     {
         if (file.Version != CurrentVersion)
@@ -123,6 +127,21 @@ public sealed class BosonFile
             if (!entry.IsPattern && entry.Hostname.Contains(DeploymentEntry.BranchPlaceholder))
                 return $"{FileName}: {entry.Branch} names one branch, so " +
                        $"{DeploymentEntry.BranchPlaceholder} in its hostname has nothing to vary";
+
+            // Each name becomes a Caddy host matcher, where `*` is a wildcard
+            // and `{...}` a placeholder filled in per request, and aliases are
+            // stored comma-separated. Anything but a plain DNS name would let
+            // one repository match hostnames it never declared, the control
+            // hostname and other projects' among them.
+            var served = entry.IsPattern
+                ? entry.Hostname.Replace(DeploymentEntry.BranchPlaceholder, "x", StringComparison.Ordinal)
+                : entry.Hostname;
+
+            if (!DeploymentEntry.IsHostname(served))
+                return NotAHostname(entry.Hostname, entry.Branch);
+
+            if (entry.Aliases.FirstOrDefault(a => !DeploymentEntry.IsHostname(a)) is { } badAlias)
+                return NotAHostname(badAlias, entry.Branch);
 
             foreach (var name in entry.AllNames())
             {
@@ -179,6 +198,17 @@ public sealed class DeploymentEntry
         Hostname.Replace(BranchPlaceholder, BranchSlug.From(branch), StringComparison.Ordinal);
 
     public IEnumerable<string> AllNames() => new[] { Hostname }.Concat(Aliases);
+
+    /// <summary>
+    /// A DNS name as a certificate authority and a browser would accept it:
+    /// dot-separated labels of `a-z0-9-`, none empty, none starting or ending
+    /// with `-`. Called after the name has been lowercased.
+    /// </summary>
+    public static bool IsHostname(string name) =>
+        name.Length is > 0 and <= 253 && name.Split('.').All(label =>
+            label.Length is > 0 and <= 63
+            && label[0] != '-' && label[^1] != '-'
+            && label.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-'));
 
     public static bool IsSetName(string name) =>
         name.Length > 0 && name[0] != '.' && name.All(c =>

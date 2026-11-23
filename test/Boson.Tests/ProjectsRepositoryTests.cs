@@ -69,6 +69,42 @@ public class ProjectsRepositoryTests
         Assert.Equal(("", ""), StoredCredentials(db, "acme/site"));
     }
 
+    private static bool FileHolds(string path, string marker)
+    {
+        if (!File.Exists(path)) return false;
+
+        using var stream = new FileStream(
+            path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+
+        var bytes = new byte[stream.Length];
+        stream.ReadExactly(bytes);
+
+        return System.Text.Encoding.ASCII.GetString(bytes).Contains(marker);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_key_that_is_gone_from_the_row_is_gone_from_the_file(bool purge)
+    {
+        // SQLite leaves old content in the page it occupied, and in the
+        // write-ahead log, unless told otherwise. A copy of the directory is
+        // the documented backup, and it would still carry the key.
+        const string marker = "MARKER-PEM-9f3c1e77aa";
+
+        using var db = new TempDb();
+        var repos = new ProjectsRepository(db.Db);
+        repos.Insert(TestProjects.New(pem: marker + new string('k', 3000)));
+
+        Assert.True(FileHolds(db.DbPath, marker) || FileHolds(db.DbPath + "-wal", marker));
+
+        if (purge) repos.Purge("acme/site");
+        else repos.Archive("acme/site");
+
+        Assert.False(FileHolds(db.DbPath, marker));
+        Assert.False(FileHolds(db.DbPath + "-wal", marker));
+    }
+
     [Fact]
     public void Credentials_archived_before_archiving_blanked_them_are_cleared()
     {

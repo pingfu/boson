@@ -45,7 +45,7 @@ Entries are matched top to bottom and the first match wins, so `main` listed abo
 
 ## Hostnames
 
-boson issues certificates and routes traffic for every declared name, the same way it does for a hostname given to `boson add`. Pointing DNS at the host stays the admin's job, including a wildcard record when a pattern entry generates names.
+boson issues certificates and routes traffic for every declared name. A name is a plain DNS name: letters, digits, `-` and `.`, with `{branch}` allowed in a pattern entry's `hostname`. A wildcard, a port, a URL or a trailing dot fails validation. Pointing DNS at the host stays the admin's job, including a wildcard record when a pattern entry generates names.
 
 A hostname another active deployment already serves is a conflict: the deploy fails before it builds and `boson status` reports it.
 
@@ -156,7 +156,8 @@ The file is read after fetch and before build, alongside the check on what compo
 - a `{branch}` hostname collides with one another deployment of the same repository generated
 - `env` names a set that does not exist on the host, or is not a plain file name
 - `expire_after` is not a number followed by `d`, `h` or `m`
-- a hostname or alias is boson's control hostname
+- a hostname or alias is not a plain DNS name
+- a hostname or alias is the hostname given to `boson init`, which boson's messages call the control hostname
 - no entry matches the branch a deploy was asked for
 
 A push to a branch no entry matches deploys nothing, which is not an error: a repository decides which of its branches are deployed.
@@ -169,6 +170,6 @@ A repository with no `_boson.yml` has nothing to deploy, and says so before it b
 
 **A ceiling on matched branches.** `expire_after` bounds how long a deployment lives, not how many exist. Fifteen branches pushed in a day is fifteen container stacks, each building an image, on one host. Either a project-wide cap that refuses past its limit, or an admission that the host's memory is the limit.
 
-**Deployments removed from the file.** Today an entry that disappears stops that branch's next deploy with the reason, and leaves its containers running until `boson remove`. Tearing it down automatically is more consistent, and also means a bad merge takes production off the internet.
+**Deployments removed from the file.** Today an entry that disappears stops that branch's next deploy with the reason, and leaves its containers running until `boson remove`, or until the `expire_after` it was last deployed with runs out. Tearing it down automatically is more consistent, and also means a bad merge takes production off the internet.
 
 **A compose file per deployment.** A staging branch may want a different compose file from production. One field, `compose:`, and a default of `docker-compose.yml`.

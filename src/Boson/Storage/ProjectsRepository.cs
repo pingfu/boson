@@ -78,6 +78,8 @@ public sealed class ProjectsRepository(Db db) : IProjectsRepository
                 github_webhook_secret = '', github_app_pem = ''
             WHERE repo = @repo AND archived_at IS NULL
             """, new { repo });
+
+        Scrub(conn);
     }
 
     /// <summary>
@@ -87,19 +89,35 @@ public sealed class ProjectsRepository(Db db) : IProjectsRepository
     public int ClearArchivedCredentials()
     {
         using var conn = db.Open();
-        return conn.Execute("""
+
+        var cleared = conn.Execute("""
             UPDATE projects
             SET github_webhook_secret = '', github_app_pem = '', updated_at = datetime('now')
             WHERE archived_at IS NOT NULL
               AND (github_webhook_secret <> '' OR github_app_pem <> '')
             """);
+
+        if (cleared > 0) Scrub(conn);
+
+        return cleared;
     }
 
     public void Purge(string repo)
     {
         using var conn = db.Open();
         conn.Execute("DELETE FROM projects WHERE repo = @repo", new { repo });
+
+        Scrub(conn);
     }
+
+    /// <summary>
+    /// secure_delete zeroes the key in the database file, but the write-ahead
+    /// log still carries the page as it was when the key was stored, until the
+    /// log is folded back in and emptied. A reader holding the log open makes
+    /// this a no-op, and the next checkpoint does it.
+    /// </summary>
+    private static void Scrub(Microsoft.Data.Sqlite.SqliteConnection conn) =>
+        conn.Execute("PRAGMA wal_checkpoint(TRUNCATE)");
 }
 
 public sealed class ProjectCollisionException(string message) : Exception(message);

@@ -29,14 +29,15 @@ public sealed class ExpiryReaper(
                 await Task.Delay(Interval, clock, ct);
                 await SweepAsync(ct);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 return;
             }
             catch (Exception e)
             {
                 // A sweep that throws must not take the daemon's only reaper
-                // with it; the next one is fifteen minutes away.
+                // with it; the next one is fifteen minutes away. That includes
+                // a timeout, which arrives as a cancellation nobody asked for.
                 logger.LogError(e, "expiry sweep failed");
             }
         }
@@ -52,7 +53,7 @@ public sealed class ExpiryReaper(
             {
                 await SweepOneAsync(deployment, now, ct);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 throw;
             }
@@ -69,8 +70,8 @@ public sealed class ExpiryReaper(
     {
         if (ParseDuration(deployment.ExpireAfter) is not { } window) return;
 
-        // Measured from the last deploy that worked: a deployment whose
-        // recent deploys all failed is still one somebody is using.
+        // Measured from the last deploy that worked: failed deploys do not
+        // keep a deployment alive.
         var last = deploys.GetLastSucceededForDeployment(deployment.Id);
         var since = DbTime.Parse(last?.FinishedAt ?? last?.StartedAt)
                     ?? DbTime.Parse(deployment.CreatedAt);

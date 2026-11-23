@@ -42,6 +42,19 @@ The system SHALL ...
 
 A requirement states behaviour with SHALL. Each requirement has at least one scenario.
 
+## Scope
+
+boson serves one operator on one host. The specs cover what boson itself does with a repository's `_boson.yml`, compose file and pushes.
+
+Out of scope, for the specs, for reviews and for fixes:
+
+- **Tools boson runs that hang or stall.** boson runs `docker`, `git` and `systemctl` and talks to Caddy, and waits for each to return. A `docker compose down` that never finishes, a stalled build or a wedged daemon is the operator's to resolve on the host. boson puts no timeout or supervision around them.
+- **Hardening against the operator.** The operator is root and is trusted. A mistaken `boson init` argument or a hand-edited database is corrected by the operator.
+- **What a pusher can do through their own compose file.** Anyone who can push to a deployed branch can get root on the host through their compose file, because the daemon runs it through Docker and is in the `docker` group. What their containers do, including refusing to stop, is theirs.
+- **Speculative failure modes.** A race or fault that needs unusual timing and has not been observed is left alone until it happens.
+
+In scope: boson handing one project another project's secrets, names or images, and boson reporting a failure wrongly or not at all.
+
 ## Glossary
 
 | Term | Meaning |

@@ -202,9 +202,10 @@ public static class DeployCommand
     /// <summary>
     /// What to print and exit with when the daemon did not start a deploy, or
     /// null when it did. The message is the daemon's own: a 404 is an unknown
-    /// project, a branch with no deployment or a file naming no branch, and a
-    /// 409 is as varied, so a message chosen here from the status would name
-    /// the wrong one.
+    /// project or a branch with no deployment, a 409 is a deploy already
+    /// running or a project that needs `--branch`, and a 422 is a deploy that
+    /// ended before it had a row to follow. A message chosen here from the
+    /// status would name the wrong one.
     /// </summary>
     internal static (string Message, int ExitCode)? Refusal(RpcResult<DeployStartResponse> start)
     {

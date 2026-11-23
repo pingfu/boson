@@ -18,8 +18,12 @@ The system SHALL sweep every active deployment every 15 minutes while the daemon
 - THEN the error is logged and the next sweep runs 15 minutes later
 
 #### Scenario: One deployment cannot be swept
-- WHEN sweeping or tearing down one deployment throws
+- WHEN sweeping or tearing down one deployment throws or times out
 - THEN the error is logged against that deployment and the sweep continues with the next
+
+#### Scenario: Daemon stopping
+- WHEN the daemon is stopping
+- THEN the sweep ends, and this is the one cancellation that ends it
 
 ### Requirement: Duration format
 The system SHALL read `expire_after` as a positive whole number, digits alone, followed by `d` (days), `h` (hours) or `m` (minutes), in either case. A deployment with no value does not expire. [boson-file](boson-file-spec.md) validation rejects a value in any other form, or one too large to be a time span.
@@ -67,7 +71,7 @@ The system SHALL tear a deployment down by running `docker compose --project-nam
 - THEN `boson status` no longer lists it
 
 ### Requirement: Image retention
-After a successful deploy, the system SHALL keep the images of the deployment's newest `images.keep` successfully deployed commits, counting the one just deployed, and remove the images of its older commits with `docker image rm`. A commit that another active deployment keeps is left alone. What another deployment keeps is its own newest commits, counted by the `images.keep` in its own checkout's `_boson.yml`, or by the deploying branch's value when that file cannot be read.
+After a successful deploy, the system SHALL keep the images of the deployment's newest `images.keep` successfully deployed commits, counting the one just deployed, and remove the images of every other commit it has deployed, including commits whose deploy failed after the image was built, with `docker image rm`. A commit that another active deployment keeps is left alone. What another deployment keeps is its own newest successful commits, counted by the `images.keep` in its own checkout's `_boson.yml`, or by the deploying branch's value when that file cannot be read, and any commit it is deploying at that moment.
 
 The commits come from the deployment's deploy history, each counted once. Retention applies to a service that has both `build` and `image` in the resolved compose configuration and whose image tag is the deployed commit's SHA. A tag is removed when it is on disk, is 40 hex characters, and names one of the removable commits.
 
@@ -83,8 +87,32 @@ The commits come from the deployment's deploy history, each counted once. Retent
 - WHEN `main` declares `images.keep: 5`, a preview branch declares `images.keep: 3`, and the preview branch deploys
 - THEN none of `main`'s newest five commits is removed
 
+#### Scenario: Deploy that built and then failed
+- WHEN a deploy builds `my-app:<sha>` and `docker compose up` then exits non-zero
+- THEN the next successful deploy of that deployment removes `my-app:<sha>`
+
+#### Scenario: Commit another branch is deploying
+- WHEN a commit this deployment has outlived is being deployed by another deployment at that moment
+- THEN its tag is left alone
+
+#### Scenario: Image not tagged with the commit
+- WHEN a built service's image tag is not the deployed commit
+- THEN nothing is removed for that service, and the log says to tag it `:$BOSON_COMMIT` to keep the last `images.keep`
+
+#### Scenario: Other tags on the same image
+- WHEN the image name also carries tags such as `latest` or `v1.2`
+- THEN those tags are left alone
+
+#### Scenario: Published image
+- WHEN a service runs an image it does not build, or one referenced by digest
+- THEN retention leaves it alone
+
+#### Scenario: Removal fails
+- WHEN `docker image rm` fails for a tag
+- THEN the reason is written to the deploy log and the deploy still succeeds
+
 ### Requirement: Images removed at teardown
-After tearing a deployment down, the system SHALL remove the images of every commit it successfully deployed, for each image its compose file builds, leaving any commit another active deployment keeps, as defined under Image retention. The image names are read from the checkout teardown leaves behind. A failure here is logged and leaves the teardown complete.
+After tearing a deployment down, the system SHALL remove the images of every commit it deployed, successfully or not, for each image its compose file builds, leaving any commit another active deployment keeps, as defined under Image retention. The image names are read from the checkout teardown leaves behind. A failure here is logged and leaves the teardown complete.
 
 #### Scenario: Expired preview branch
 - WHEN a preview deployment that built `my-app:${BOSON_COMMIT}` for three commits expires
@@ -98,18 +126,6 @@ After tearing a deployment down, the system SHALL remove the images of every com
 - WHEN the checkout is missing, or `docker compose config` fails in it
 - THEN the images are left in place, the reason is logged, and the deployment stays torn down
 
-#### Scenario: Image not tagged with the commit
-- WHEN a built service's image tag is not the deployed commit
-- THEN nothing is removed, and the log says to tag it `:$BOSON_COMMIT` to keep the last `images.keep`
-
-#### Scenario: Other tags on the same image
-- WHEN the image name also carries tags such as `latest` or `v1.2`
-- THEN those tags are left alone
-
-#### Scenario: Published image
-- WHEN a service runs an image it does not build, or one referenced by digest
-- THEN retention leaves it alone
-
-#### Scenario: Removal fails
+#### Scenario: Removal fails at teardown
 - WHEN `docker image rm` fails for a tag
-- THEN the reason is written to the deploy log and the deploy still succeeds
+- THEN the reason is written to the daemon log and the deployment stays torn down

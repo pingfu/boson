@@ -179,9 +179,13 @@ public sealed class FakeCaddySynchroniser : ICaddySynchroniser
     public int SyncCalls;
     public Exception? Throw;
 
+    /// <summary>What else happens on the host while Caddy is being asked.</summary>
+    public Action? OnSync;
+
     public Task SyncAsync(CancellationToken ct = default)
     {
         Interlocked.Increment(ref SyncCalls);
+        OnSync?.Invoke();
         if (Throw is not null) throw Throw;
         return Task.CompletedTask;
     }
@@ -213,17 +217,25 @@ public sealed class FakeDeployer : IDeployer
         Action<long>? onStarted = null, CancellationToken ct = default)
     {
         lock (Calls) Calls.Add((repo, branch, trigger));
-        onStarted?.Invoke(1);
+
+        // A deploy that ends before it has a row raises no id.
+        if (Result is null) onStarted?.Invoke(1);
+
         Invoked.TrySetResult();
-        return Task.FromResult<DeployResult>(new DeployResult.Completed(1, true, 1));
+        return Task.FromResult(Result ?? new DeployResult.Completed(1, true, 1));
     }
+
+    /// <summary>How a deploy ends when it never got as far as a deploy row.</summary>
+    public DeployResult? Result;
 
     /// <summary>The deployment whose teardown fails, the way one does when Caddy is down.</summary>
     public long? TearDownThrowsFor;
 
+    public Exception TearDownThrows = new HttpRequestException("simulated teardown failure");
+
     public Task TearDownAsync(Deployment deployment, CancellationToken ct = default)
     {
-        if (deployment.Id == TearDownThrowsFor) throw new HttpRequestException("simulated teardown failure");
+        if (deployment.Id == TearDownThrowsFor) throw TearDownThrows;
 
         lock (TearDowns) TearDowns.Add(deployment);
         TornDown.TrySetResult();

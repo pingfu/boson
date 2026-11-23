@@ -53,7 +53,7 @@ public sealed class ExpiryReaperTests : IDisposable
     [InlineData("3 d")]
     [InlineData("99999999d")]
     [InlineData("2147483647h")]
-    public void Anything_else_is_ignored_rather_than_guessed_at(string? text)
+    public void Anything_else_is_not_a_duration(string? text)
     {
         Assert.Null(ExpiryReaper.ParseDuration(text));
     }
@@ -71,6 +71,40 @@ public sealed class ExpiryReaperTests : IDisposable
         await NewReaper().SweepAsync();
 
         Assert.Equal(second.Id, Assert.Single(_deployer.TearDowns).Id);
+    }
+
+    [Fact]
+    public async Task A_teardown_that_times_out_is_a_failure_of_that_one_and_not_a_shutdown()
+    {
+        // A timeout arrives as a cancelled task. Read as the daemon stopping,
+        // it ends the sweep and then the reaper, and nothing expires again
+        // until the daemon restarts.
+        var first = TestProjects.Insert(_projects, _deployments, expireAfter: "7d");
+        var second = TestProjects.Insert(
+            _projects, _deployments, branch: "zeta", hostname: "zeta.example.com", port: 30001, expireAfter: "7d");
+
+        _deployer.TearDownThrowsFor = first.Id;
+        _deployer.TearDownThrows = new TaskCanceledException("the request timed out", new TimeoutException());
+        _clock.Now += TimeSpan.FromDays(8);
+
+        await NewReaper().SweepAsync();
+
+        Assert.Equal(second.Id, Assert.Single(_deployer.TearDowns).Id);
+    }
+
+    [Fact]
+    public async Task A_sweep_stops_when_the_daemon_is_stopping()
+    {
+        var first = TestProjects.Insert(_projects, _deployments, expireAfter: "7d");
+
+        using var stopping = new CancellationTokenSource();
+
+        _deployer.TearDownThrowsFor = first.Id;
+        _deployer.TearDownThrows = new OperationCanceledException(stopping.Token);
+        _clock.Now += TimeSpan.FromDays(8);
+        stopping.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => NewReaper().SweepAsync(stopping.Token));
     }
 
     [Fact]

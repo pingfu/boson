@@ -61,7 +61,21 @@ public sealed class UninstallCommandTests : IDisposable
         var e = Assert.Throws<IOException>(() =>
             UninstallCommand.WriteBackup(_db.Db, _dirs.Paths.TmpDir, Target));
 
-        Assert.Contains("already exists", e.Message);
+        // Refused by boson before the database is read, not by the move after
+        // the backup has been staged, whose message says the same words.
+        Assert.Equal("that path already exists", e.Message);
         Assert.Equal("something the operator wanted", File.ReadAllText(Target));
+        Assert.False(Directory.Exists(_dirs.Paths.TmpDir) && Directory.GetFiles(_dirs.Paths.TmpDir).Length > 0);
+    }
+
+    [Fact]
+    public void A_directory_at_the_path_is_refused()
+    {
+        Directory.CreateDirectory(Target);
+
+        var e = Assert.Throws<IOException>(() =>
+            UninstallCommand.WriteBackup(_db.Db, _dirs.Paths.TmpDir, Target));
+
+        Assert.Equal("that path already exists", e.Message);
     }
 }

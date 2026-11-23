@@ -7,7 +7,7 @@ boson keeps its state in one SQLite database, `/var/lib/boson/boson.db`: platfor
 ## Requirements
 
 ### Requirement: Connections
-The system SHALL open every connection with `journal_mode = WAL`, `foreign_keys = ON` and `busy_timeout = 5000`. The daemon and CLI processes use the database concurrently.
+The system SHALL open every connection with `journal_mode = WAL`, `foreign_keys = ON`, `busy_timeout = 5000` and `secure_delete = ON`. The daemon and CLI processes use the database concurrently.
 
 #### Scenario: CLI reads during a deploy
 - WHEN `boson status` runs while the daemon writes a deploy row
@@ -57,6 +57,10 @@ The system SHALL archive a project or deployment by setting `archived_at`, keepi
 #### Scenario: Archived project's credentials
 - WHEN a project is archived
 - THEN its row holds no webhook secret and no private key
+
+#### Scenario: Key bytes in the file
+- WHEN a project is archived or purged
+- THEN the private key's bytes are absent from `boson.db` and `boson.db-wal`: `secure_delete` zeroes the page, and the write-ahead log is checkpointed and truncated straight after
 
 
 #### Scenario: Archived deployment's names

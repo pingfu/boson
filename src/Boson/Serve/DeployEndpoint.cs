@@ -12,8 +12,8 @@ namespace Boson.Serve;
 /// POST /deploy/{org}/{name} on the CLI socket. Every refusal carries the
 /// reason in an <see cref="ErrorResponse"/>, which `boson deploy` prints as
 /// it stands: one status covers several reasons, and only this side knows
-/// which one it was. Neither answer waits on work: a deploy returns its id
-/// and a declaration returns that it has begun.
+/// which one it was. A deploy answers with its id once the fetch has read
+/// what the branch declares, and a declaration answers that it has begun.
 /// </summary>
 public static class DeployEndpoint
 {
@@ -41,6 +41,14 @@ public static class DeployEndpoint
             var requested = ctx.Request.Query["branch"].ToString();
 
             var active = deployments.ListActiveForRepo(repo);
+
+            // A declaration makes its deployments one at a time and withdraws
+            // them all if a later one fails. Until it ends the project is not
+            // declared, however many rows exist, and a deploy started now
+            // would build a deployment that may be archived underneath it.
+            if (orchestrator.IsDeclaring(repo))
+                return Results.Json(new DeployStartResponse(0, Declaring: true),
+                    RpcJson.Default.DeployStartResponse, statusCode: StatusCodes.Status202Accepted);
 
             if (active.Count == 0)
             {
@@ -108,6 +116,12 @@ public static class DeployEndpoint
 
             return await deployTask switch
             {
+                // No deploy row was written, so there is no id to follow and
+                // the reason has to travel in the answer. A 202 here would
+                // leave the CLI waiting on a deploy that does not exist.
+                DeployResult.Stopped s => Results.UnprocessableEntity(new ErrorResponse(s.Error)),
+                DeployResult.Completed { LastDeployId: 0 } => Results.UnprocessableEntity(new ErrorResponse(
+                    $"the deploy of {repo} ended before it started; journalctl -u boson has the reason")),
                 DeployResult.Completed c => Results.Json(new DeployStartResponse(c.LastDeployId),
                     RpcJson.Default.DeployStartResponse, statusCode: StatusCodes.Status202Accepted),
                 DeployResult.LockHeld => Results.Conflict(new ErrorResponse(

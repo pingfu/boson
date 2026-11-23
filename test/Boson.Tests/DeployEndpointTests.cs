@@ -260,8 +260,48 @@ public sealed class DeployEndpointTests : IAsyncLifetime
     [Fact]
     public async Task A_declaration_that_throws_partway_leaves_nothing_half_declared()
     {
-        // The second hostname belongs to another project, so the insert that
-        // follows a good one throws.
+        // The first branch is in the database when the second one throws.
+        _projects.Insert(TestProjects.New(repo: Repo));
+
+        var sawTheFirst = false;
+
+        _dns.ResolvesHost = hostname =>
+        {
+            if (hostname != "staging.example.com") return true;
+
+            sawTheFirst = _deployments.GetByBranch(Repo, "main") is not null;
+
+            throw new InvalidOperationException("the resolver fell over");
+        };
+
+        WriteBosonFile("""
+            version: 1
+            deployments:
+              - branch: main
+                hostname: site.example.com
+              - branch: staging
+                hostname: staging.example.com
+            """);
+
+        var declared = await DeclareAsync();
+
+        Assert.True(sawTheFirst);
+        Assert.Equal("failed", declared.Phase);
+        Assert.Contains("the resolver fell over", declared.Error);
+        Assert.Empty(_deployments.ListActiveForRepo(Repo));
+        Assert.Null(_github.WebhookUrlSet);
+
+        // With nothing left behind, the next deploy declares the whole file.
+        _dns.ResolvesHost = null;
+        WriteBosonFile(OneBranch);
+
+        Assert.Equal("done", (await DeclareAsync()).Phase);
+        Assert.Equal("https://site.example.com/_boson/webhook/acme/site", _github.WebhookUrlSet);
+    }
+
+    [Fact]
+    public async Task A_name_another_project_serves_stops_the_declaration_before_anything_is_made()
+    {
         TestProjects.Insert(_projects, _deployments, repo: "acme/other", hostname: "taken.example.com");
         _projects.Insert(TestProjects.New(repo: Repo));
 
@@ -277,14 +317,66 @@ public sealed class DeployEndpointTests : IAsyncLifetime
         var declared = await DeclareAsync();
 
         Assert.Equal("failed", declared.Phase);
+        Assert.Contains("taken.example.com is already served by acme/other", declared.Error);
         Assert.Empty(_deployments.ListActiveForRepo(Repo));
-        Assert.Null(_github.WebhookUrlSet);
+    }
 
-        // With nothing left behind, the next deploy declares the whole file.
-        WriteBosonFile(OneBranch);
+    [Fact]
+    public async Task A_deploy_asked_for_while_the_project_is_half_declared_joins_the_declaration()
+    {
+        // Its deployments appear one at a time and are all withdrawn if a
+        // later one fails, so the first of them existing is not a project to
+        // deploy.
+        _projects.Insert(TestProjects.New(repo: Repo));
 
-        Assert.Equal("done", (await DeclareAsync()).Phase);
-        Assert.Equal("https://site.example.com/_boson/webhook/acme/site", _github.WebhookUrlSet);
+        using var release = new ManualResetEventSlim();
+
+        _dns.ResolvesHost = hostname =>
+        {
+            if (hostname == "staging.example.com") release.Wait(TimeSpan.FromSeconds(10));
+
+            return true;
+        };
+
+        WriteBosonFile("""
+            version: 1
+            deployments:
+              - branch: main
+                hostname: site.example.com
+              - branch: staging
+                hostname: staging.example.com
+            """);
+
+        Assert.True((await StartAsync()).Declaring);
+
+        for (var i = 0; i < 200 && _deployments.GetByBranch(Repo, "main") is null; i++)
+            await Task.Delay(25);
+
+        Assert.NotNull(_deployments.GetByBranch(Repo, "main"));
+
+        var second = await StartAsync();
+
+        release.Set();
+
+        Assert.True(second.Declaring);
+        Assert.Empty(_deployer.Calls);
+
+        await _orchestrator.TryGetDeclaration(Repo)!;
+    }
+
+    [Fact]
+    public async Task A_deploy_that_ends_before_it_has_a_row_is_refused_with_its_reason()
+    {
+        // A 202 with no deploy id would leave the CLI following a deploy that
+        // does not exist.
+        TestProjects.Insert(_projects, _deployments, repo: Repo);
+
+        _deployer.Result = new DeployResult.Stopped("_boson.yml: site.example.com is already served by acme/other branch main");
+
+        var (status, body) = await DeployAsync();
+
+        Assert.Equal(422, status);
+        Assert.Contains("already served by acme/other", body);
     }
 
     [Fact]

@@ -48,6 +48,10 @@ The system SHALL declare a saved project by minting an installation token, readi
 
 Declarations run one at a time. A project that already has an active deployment is left as it is.
 
+#### Scenario: Project removed while it is being declared
+- WHEN `boson remove` archives or purges the project while its declaration is fetching or creating deployments
+- THEN the declaration stops with `<org/name> was removed while it was being declared`, and any deployment it had created is archived, releasing its hostname and port
+
 #### Scenario: File names two branches and one pattern
 - WHEN `_boson.yml` has entries for `main`, `develop` and `"*"`
 - THEN deployments are created for `main` and `develop`, each with its own allocated port

@@ -82,8 +82,12 @@ The system SHALL decline pushes to a deployment whose `webhook_active` is unset.
 - THEN `deploy_pending` is set and the response is 202 `{"status":"queued"}`
 
 #### Scenario: Push-created deployment whose first deploy failed
-- WHEN a pattern branch's first deploy fails and the fix is pushed
+- WHEN a pattern branch's first deploy fails after its deployment was created (a missing environment set, the port check, the build) and the fix is pushed
 - THEN the response is 200 `{"status":"inactive"}`, and the branch deploys again once `boson deploy <org/name> --branch <name>` succeeds
+
+#### Scenario: First deploy stopped before a deployment existed
+- WHEN a pattern branch's first deploy stops before its deployment is created, or its deployment is withdrawn because Caddy refused the route, and the fix is pushed
+- THEN the response is 202 and the push deploys
 
 ### Requirement: Coalescing
 The system SHALL record a push that arrives while its branch is deploying by setting `deploy_pending` on the deployment. The running deploy drains it as specified in [deploy](deploy-spec.md), which also lists the cases where the push is lost.

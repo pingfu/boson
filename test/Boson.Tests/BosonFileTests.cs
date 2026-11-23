@@ -164,6 +164,41 @@ public class BosonFileTests
     }
 
     [Theory]
+    [InlineData("hostname: \"*.example.org\"", "*.example.org")]
+    [InlineData("hostname: \"{http.request.host}\"", "{http.request.host}")]
+    [InlineData("hostname: a.example.org.", "a.example.org.")]
+    [InlineData("hostname: \"a.example.org:8443\"", "a.example.org:8443")]
+    [InlineData("hostname: \"https://a.example.org/x\"", "https://a.example.org/x")]
+    [InlineData("hostname: \"a b.example.org\"", "a b.example.org")]
+    [InlineData("hostname: a_b.example.org", "a_b.example.org")]
+    [InlineData("hostname: -a.example.org", "-a.example.org")]
+    [InlineData("hostname: a..example.org", "a..example.org")]
+    [InlineData("hostname: a.example.org\n    aliases: [\"x.example.org,boson.example.org\"]", "x.example.org,boson.example.org")]
+    [InlineData("hostname: a.example.org\n    aliases: [\"*.example.org\"]", "*.example.org")]
+    [InlineData("hostname: a.example.org\n    aliases: [\"{branch}.example.org\"]", "{branch}.example.org")]
+    public void A_name_that_is_not_a_plain_dns_name_is_refused(string lines, string name)
+    {
+        // Each becomes a Caddy host matcher, where `*` and `{...}` match names
+        // the file never spelled out, and aliases are stored comma-separated,
+        // so one string can carry a second name past every check made on it.
+        var yaml = $"version: 1\ndeployments:\n  - branch: main\n    {lines}";
+
+        Assert.Null(BosonFile.Parse(yaml, out var problem));
+        Assert.Contains($"\"{name}\" is not a hostname boson can serve", problem);
+    }
+
+    [Theory]
+    [InlineData("{branch}.example.org")]
+    [InlineData("pr-{branch}.preview.example.org")]
+    [InlineData("{branch}-preview.example.org")]
+    public void A_pattern_hostname_is_a_dns_name_once_the_branch_is_filled_in(string hostname)
+    {
+        Assert.NotNull(BosonFile.Parse(
+            $"version: 1\ndeployments:\n  - branch: \"*\"\n    hostname: \"{hostname}\"", out var problem));
+        Assert.Null(problem);
+    }
+
+    [Theory]
     [InlineData("2w")]
     [InlineData("soon")]
     [InlineData("14")]

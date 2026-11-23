@@ -459,9 +459,160 @@ public class DeployerTests : IDisposable
 
         var result = await NewDeployer().DeployAsync(Repo, "feature/search", DeployTrigger.Webhook);
 
-        Assert.False(Assert.IsType<DeployResult.Completed>(result).Succeeded);
+        // No deployment to record it against, so the reason comes back to
+        // whoever asked.
+        Assert.Contains("is already served by acme/other", Assert.IsType<DeployResult.Stopped>(result).Error);
         Assert.Null(_deployments.GetByBranch(Repo, "feature/search"));
         Assert.Equal(0, _docker.UpCalls);
+    }
+
+    [Fact]
+    public async Task A_pattern_that_generates_the_control_hostname_stops_that_branch()
+    {
+        // The one name that cannot be checked before the branch exists.
+        _platform.Set(PlatformRepository.AdminHostname, "boson.example.com");
+
+        WriteBosonFile("""
+            version: 1
+            deployments:
+              - branch: "*"
+                hostname: "{branch}.example.com"
+            """, branch: "boson");
+
+        var result = await NewDeployer().DeployAsync(Repo, "boson", DeployTrigger.Webhook);
+
+        Assert.Contains("control hostname", Assert.IsType<DeployResult.Stopped>(result).Error);
+        Assert.Null(_deployments.GetByBranch(Repo, "boson"));
+    }
+
+    [Fact]
+    public async Task A_boson_file_that_cannot_be_opened_is_a_failed_deploy_with_a_reason()
+    {
+        var path = Path.Combine(_dirs.Paths.CheckoutDir(Repo, BranchSlug.From(Branch)), BosonFile.FileName);
+
+        using (new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Assert.Contains($"{BosonFile.FileName} could not be read", await FailureAsync());
+
+        Assert.Equal(0, _docker.UpCalls);
+    }
+
+    [Fact]
+    public async Task A_caddy_timeout_is_a_failed_deploy_and_not_a_cancellation()
+    {
+        // HttpClient reports a timeout as a cancelled task. Nobody cancelled
+        // this deploy, and treated as cancelled it would skip the put-back.
+        WriteBosonFile($"""
+            version: 1
+            deployments:
+              - branch: {Branch}
+                hostname: renamed.example.com
+            """);
+
+        _caddy.Throw = new TaskCanceledException("the request timed out", new TimeoutException());
+
+        Assert.Contains("caddy did not take the change to renamed.example.com", await FailureAsync());
+        Assert.Equal(TestProjects.Hostname, Current().Hostname);
+
+        _caddy.Throw = null;
+        var synced = _caddy.SyncCalls;
+
+        Assert.True(Assert.IsType<DeployResult.Completed>(
+            await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual)).Succeeded);
+        Assert.True(_caddy.SyncCalls > synced);
+    }
+
+    [Fact]
+    public async Task A_change_that_cannot_be_put_back_is_still_a_failed_deploy_and_is_synced_by_the_next()
+    {
+        WriteBosonFile($"""
+            version: 1
+            deployments:
+              - branch: {Branch}
+                hostname: renamed.example.com
+            """);
+
+        // While Caddy is being asked, another repository's first deploy takes
+        // the name this one has just let go of, and then Caddy refuses.
+        _caddy.OnSync = () =>
+        {
+            _caddy.OnSync = null;
+            TestProjects.Insert(
+                _projects, _deployments, repo: "acme/other", hostname: TestProjects.Hostname, port: 30001);
+        };
+        _caddy.Throw = new HttpRequestException("connection refused");
+
+        var deployer = NewDeployer();
+
+        var failed = Assert.IsType<DeployResult.Completed>(
+            await deployer.DeployAsync(Repo, Branch, DeployTrigger.Manual));
+
+        Assert.False(failed.Succeeded);
+        Assert.Contains("caddy did not take the change", _deploys.Get(failed.LastDeployId)!.Error);
+        Assert.Equal("renamed.example.com", Current().Hostname);
+
+        // Nothing in the file differs from the database now, and Caddy still
+        // has to be told.
+        _caddy.Throw = null;
+        var synced = _caddy.SyncCalls;
+
+        Assert.True(Assert.IsType<DeployResult.Completed>(
+            await deployer.DeployAsync(Repo, Branch, DeployTrigger.Manual)).Succeeded);
+        Assert.Equal(synced + 1, _caddy.SyncCalls);
+    }
+
+    [Fact]
+    public async Task The_image_of_a_deploy_that_built_and_then_failed_is_removed_by_the_next_that_works()
+    {
+        // `up --build` tags the image before a container can fail to start, so
+        // a failed deploy leaves one, and only history knows whose it is.
+        _docker.UpExitCode = 1;
+        await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
+        var failedSha = Rows()[^1].CommitSha!;
+
+        _docker.UpExitCode = 0;
+        _docker.ImageTags["acme/site-web"] = [_git.NextSha, failedSha];
+
+        await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
+
+        Assert.Equal([$"acme/site-web:{failedSha}"], _docker.ImagesRemoved);
+    }
+
+    [Fact]
+    public async Task A_commit_deployed_twice_counts_once_towards_what_is_kept()
+    {
+        Deployed(_deployment, Sha4);
+        Deployed(_deployment, Sha3);
+        Deployed(_deployment, Sha3);
+        Deployed(_deployment, Sha2);
+
+        _docker.ImageTags["acme/site-web"] = [_git.NextSha, Sha2, Sha3, Sha4];
+
+        await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
+
+        // keep: 3 is this deploy's commit, Sha2 and Sha3. A redeploy of Sha3
+        // is one image, not two of the allowance.
+        Assert.Equal([$"acme/site-web:{Sha4}"], _docker.ImagesRemoved);
+    }
+
+    [Fact]
+    public async Task A_commit_another_branch_is_deploying_right_now_is_left_alone()
+    {
+        // Its image exists before its container does, so Docker would let the
+        // removal through and that deploy would lose the image it just built.
+        Deployed(_deployment, Sha4);
+        Deployed(_deployment, Sha3);
+        Deployed(_deployment, Sha2);
+
+        var develop = TestProjects.Insert(
+            _projects, _deployments, branch: "develop", hostname: "develop.example.com", port: 30001);
+
+        _deploys.SetCommitSha(_deploys.Insert(develop.Id, DeployTrigger.Webhook, i => $"{i}.log"), Sha4);
+
+        _docker.ImageTags["acme/site-web"] = [_git.NextSha, Sha2, Sha3, Sha4];
+
+        await NewDeployer().DeployAsync(Repo, Branch, DeployTrigger.Manual);
+
+        Assert.Empty(_docker.ImagesRemoved);
     }
 
     [Fact]
@@ -506,7 +657,7 @@ public class DeployerTests : IDisposable
 
         var result = await NewDeployer().DeployAsync(Repo, "feature/search", DeployTrigger.Webhook);
 
-        Assert.False(Assert.IsType<DeployResult.Completed>(result).Succeeded);
+        Assert.Contains("caddy did not take the route", Assert.IsType<DeployResult.Stopped>(result).Error);
         Assert.Null(_deployments.GetByBranch(Repo, "feature/search"));
         Assert.Equal(0, _docker.UpCalls);
 
@@ -688,6 +839,22 @@ public class DeployerTests : IDisposable
         await NewDeployer().TearDownAsync(_deployment);
 
         Assert.Equal([$"acme/site-web:{Sha2}", $"acme/site-web:{Sha3}"], _docker.ImagesRemoved);
+    }
+
+    [Fact]
+    public async Task Tearing_down_removes_the_image_of_a_deploy_that_failed_too()
+    {
+        Deployed(_deployment, Sha2);
+
+        var failed = _deploys.Insert(_deployment.Id, DeployTrigger.Webhook, i => $"{i}.log");
+        _deploys.SetCommitSha(failed, Sha4);
+        _deploys.Finish(failed, succeeded: false, "docker compose up exited 1");
+
+        _docker.ImageTags["acme/site-web"] = [Sha4, Sha2];
+
+        await NewDeployer().TearDownAsync(_deployment);
+
+        Assert.Equal([$"acme/site-web:{Sha4}", $"acme/site-web:{Sha2}"], _docker.ImagesRemoved);
     }
 
     [Fact]

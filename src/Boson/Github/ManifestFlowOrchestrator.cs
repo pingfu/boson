@@ -359,6 +359,13 @@ public sealed class ManifestFlowOrchestrator(
             declaration.Error is null ? "done" : "failed", declaration.Error, [.. declaration.Warnings]);
     }
 
+    /// <summary>
+    /// Whether a declaration `boson deploy` started for this repository is
+    /// still running. Its deployments appear one at a time, so the first of
+    /// them existing does not mean the project is declared.
+    /// </summary>
+    public bool IsDeclaring(string repo) => TryGetDeclaration(repo) is { IsCompleted: false };
+
     internal Task<Declaration>? TryGetDeclaration(string repo)
     {
         lock (_gate) return _declarations.GetValueOrDefault(repo);
@@ -377,8 +384,10 @@ public sealed class ManifestFlowOrchestrator(
         var warnings = new List<string>();
         var envSets = new List<string>();
 
-        // Two deploys of one undeclared project would otherwise both insert the
-        // same deployments, and the second would fail on the hostname.
+        // Two declarations of one project would otherwise both insert the same
+        // deployments, and the second would fail on the hostname. One gate for
+        // every repository, since declarations are rare and port allocation
+        // between them is then serialised too.
         await _declaring.WaitAsync();
 
         try
@@ -448,9 +457,18 @@ public sealed class ManifestFlowOrchestrator(
                 return new Declaration(reserved, warnings, envSets);
             }
 
+            // The clone can take minutes, and `boson remove` does not wait for
+            // it. Deployments made for a project archived meanwhile would hold
+            // their hostname and port for good: every query that lists them
+            // looks through the project, and would never show them again.
+            if (Removed(project))
+                return new Declaration($"{repo} was removed while it was being declared", warnings, envSets);
+
+            var created = new List<long>();
+
             try
             {
-                await CreateDeploymentsAsync(project, declared, defaultBranch, warnings, envSets);
+                await CreateDeploymentsAsync(project, declared, defaultBranch, warnings, envSets, created);
 
                 await caddy.SyncAsync();
             }
@@ -459,11 +477,22 @@ public sealed class ManifestFlowOrchestrator(
                 // `boson deploy` declares a project that has no deployments,
                 // so the ones made before the failure would pass for the whole
                 // set and the webhook address would never move. Withdrawn, the
-                // next attempt makes all of them.
-                foreach (var partial in deployments.ListActiveForRepo(repo))
-                    deployments.Archive(partial.Id);
+                // next attempt makes all of them. By id, because a listing
+                // would miss them if the project has gone.
+                foreach (var id in created) deployments.Archive(id);
 
                 throw;
+            }
+
+            // Asked again now the rows exist, since the removal may have come
+            // between the first look and the inserts.
+            if (Removed(project))
+            {
+                foreach (var id in created) deployments.Archive(id);
+
+                await caddy.SyncAsync();
+
+                return new Declaration($"{repo} was removed while it was being declared", warnings, envSets);
             }
 
             // The App was created pointing at the control plane, which GitHub
@@ -519,9 +548,11 @@ public sealed class ManifestFlowOrchestrator(
     /// describes branches that may not exist yet, so its deployments are
     /// created by the pushes that produce them.
     /// </summary>
+    private bool Removed(Project project) => projects.GetByRepo(project.Repo)?.Id != project.Id;
+
     private async Task CreateDeploymentsAsync(
         Project project, BosonFile declared, string defaultBranch,
-        List<string> warnings, List<string> envSets)
+        List<string> warnings, List<string> envSets, List<long> created)
     {
         foreach (var declaration in declared.Deployments.Where(d => !d.IsPattern))
         {
@@ -538,7 +569,7 @@ public sealed class ManifestFlowOrchestrator(
                     $"{hostname} resolves to no local interface (common and legitimate behind NAT); " +
                     "whether it points at this host is proven by opening the site");
 
-            deployments.Insert(new Deployment
+            created.Add(deployments.Insert(new Deployment
             {
                 ProjectId = project.Id,
                 Repo = project.Repo,
@@ -550,7 +581,7 @@ public sealed class ManifestFlowOrchestrator(
                     deployments.ListActive().Select(d => d.Port), PortAllocator.IsFreeOnHost),
                 EnvSet = declaration.Env,
                 ExpireAfter = declaration.ExpireAfter,
-            });
+            }));
 
             logger.LogInformation(
                 "{Repo}#{Branch}: deployment declared for {Hostname}", project.Repo, declaration.Branch, hostname);

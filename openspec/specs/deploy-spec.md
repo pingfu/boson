@@ -44,8 +44,8 @@ When a project has no active deployment, the system SHALL start the declaration 
 - THEN the command tells the operator to re-run `boson deploy <org/name>` and exits 2
 
 #### Scenario: Second request while declaring
-- WHEN another `boson deploy` arrives for the same project while its declaration runs
-- THEN it follows the running declaration
+- WHEN another `boson deploy` arrives for the same project while its declaration runs, whether or not any of its deployments exist yet
+- THEN it follows the running declaration and starts no deploy
 
 ### Requirement: Following a deploy
 The system SHALL answer a deploy request with the id of the first pass's deploy as soon as its row exists, which is after the fetch and `_boson.yml` steps. The CLI SHALL print the log file `/var/log/boson/deploys/<id>.log` as it grows and poll the deploy row every 300 ms until it finishes.
@@ -57,6 +57,10 @@ The system SHALL answer a deploy request with the id of the first pass's deploy 
 #### Scenario: Deploy fails
 - WHEN the deploy row finishes with status `failed`
 - THEN the command prints `✗ deploy #<id> failed: <error>` and the log path, and exits 2
+
+#### Scenario: Deploy ends before it has a row
+- WHEN the deploy stops in steps 1 to 4 for a branch that has no deployment to record it against
+- THEN the request is answered 422 with the reason, and the command prints it and exits 2
 
 #### Scenario: Operator interrupts
 - WHEN the operator presses Ctrl-C while the log streams
@@ -133,7 +137,7 @@ The system SHALL allocate each new deployment the lowest port from 30000 to 3276
 - WHEN every port in the range is held or in use
 - THEN allocation fails with `no free port between 30000 and 32767`
 
-[bug] Allocation is not serialised across branches. Two new branches deploying at once can be given the same port. The second is refused as a failed deploy and succeeds on its next push.
+[bug] Allocation is not serialised across branches. Two new branches deploying at once can be given the same port. The second stops with the reason in the daemon log, creates no deployment, and succeeds on its next push.
 
 ### Requirement: Compose project name
 The system SHALL pass `--project-name` on every `docker compose` invocation for a deployment. The name is `<org>/<name>-<slug>`, lowercased, with every character outside `a-z`, `0-9`, `_` and `-` replaced by `-`.
@@ -167,10 +171,17 @@ The system SHALL write one log file per deploy, containing a header naming the d
 - THEN the URL reads `https://x-access-token:***@github.com/<org>/<name>.git`
 
 ### Requirement: Recording failures
-The system SHALL record a failure against the deployment when one exists, as a deploy row with status `failed` and a log file. A failure for a branch with no deployment is written to the daemon log.
+The system SHALL record a failure against the deployment when one exists, as a deploy row with status `failed` and a log file. A failure for a branch with no deployment is written to the daemon log and returned to the caller as the reason the deploy stopped.
 
+This covers every failure in steps 1 to 4: a failed token mint or fetch, a missing, unreadable or invalid file, a missing entry, a name another deployment serves, no free port, and a Caddy synchronisation that fails or times out. A timeout is a failure. A deploy is abandoned without a record only when the daemon itself is stopping.
 
-This covers every failure in steps 1 to 4: a failed token mint or fetch, a missing, unreadable or invalid file, a missing entry, a name another deployment serves, no free port, and a failed Caddy synchronisation.
+#### Scenario: Caddy times out
+- WHEN the Caddy synchronisation does not answer within its 10 second limit
+- THEN the deploy fails with its reason and the change is put back, as for any other Caddy failure
+
+#### Scenario: A change that cannot be put back
+- WHEN the Caddy synchronisation fails and, meanwhile, another deployment has taken the name this one let go of
+- THEN the deploy fails with the Caddy reason, the new values stay, and the next deploy the daemon prepares, for any branch, synchronises Caddy before it builds
 
 #### Scenario: Caddy refuses a changed route
 - WHEN the Caddy synchronisation fails after a deployment's declared values were updated

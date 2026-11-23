@@ -72,7 +72,7 @@ The system SHALL replace `{branch}` in a hostname with the branch's slug. A patt
 - WHEN the entry is `branch: "*"`, `hostname: "{branch}.example.org"` and the branch is `develop`
 - THEN the hostname is `develop.example.org`
 
-[bug] `{branch}` is filled in for `hostname` and left as written in `aliases`. A pattern entry with an alias gives every matching branch the same alias, so the second branch's deploy fails with the alias reported as already served by the first.
+[bug] A pattern entry with an alias gives every matching branch the same alias, so the second branch's deploy fails with the alias reported as already served by the first. `{branch}` in an alias is rejected by validation.
 
 ### Requirement: Branch slug
 The system SHALL reduce a branch name to a slug of `a-z`, `0-9` and `-`, at most 63 characters, as follows:
@@ -96,7 +96,7 @@ The system SHALL reduce a branch name to a slug of `a-z`, `0-9` and `-`, at most
 - THEN their slugs differ, because the first carries a hash suffix and the second is unchanged
 
 ### Requirement: Validation
-The system SHALL reject a file with the first problem found and report it with the message shown. The order is: parse, version, no entries, then for each entry from the top its branch, hostname, placeholder, duplicate-name, `env` and `expire_after` checks, then `images.keep`.
+The system SHALL reject a file with the first problem found and report it with the message shown. The order is: parse, version, no entries, then for each entry from the top its branch, hostname, empty-alias, placeholder, name-syntax, duplicate-name, `env` and `expire_after` checks, then `images.keep`.
 
 | Problem | Message |
 |---|---|
@@ -106,11 +106,22 @@ The system SHALL reject a file with the first problem found and report it with t
 | Entry without `branch` | `_boson.yml has a deployment with no branch` |
 | Entry without `hostname` | `_boson.yml: deployment for <branch> has no hostname` |
 | Pattern entry without `{branch}` | `_boson.yml: <branch> matches many branches, so its hostname needs {branch} in it` |
+| `hostname` or an alias is not a DNS name | `_boson.yml: "<name>" is not a hostname boson can serve for <branch>; write a DNS name made of letters, digits, '-' and '.', such as example.org` |
 | Single-branch entry with `{branch}` | `_boson.yml: <branch> names one branch, so {branch} in its hostname has nothing to vary` |
 | Hostname or alias used twice, compared case-insensitively | `_boson.yml: <name> is claimed by both <branch> and <branch>` |
 | `env` is not a file name of letters, digits, `.`, `_` and `-`, or starts with `.` | `_boson.yml: env for <branch> is "<value>"; an environment set is a file name made of letters, digits, '.', '_' and '-', and does not start with '.'` |
 | `expire_after` is not a positive whole number followed by `d`, `h` or `m`, or is too large to be a time span | `_boson.yml: expire_after for <branch> is "<value>"; write a whole number followed by d, h or m, such as 14d` |
 | `images.keep` below 1 | `_boson.yml: images.keep is <n>, and a deployment needs at least one image` |
+
+A DNS name is dot-separated labels of `a-z`, `0-9` and `-`, each 1 to 63 characters and neither starting nor ending with `-`, 253 characters in all. A pattern entry's hostname is checked with `{branch}` filled in. Aliases take no `{branch}`.
+
+#### Scenario: Wildcard or placeholder hostname
+- WHEN an entry declares `hostname: "*.example.org"` or `hostname: "{http.request.host}"`
+- THEN the file is rejected, because Caddy would match hostnames the file never named
+
+#### Scenario: Two names in one alias
+- WHEN an entry declares `aliases: ["a.example.org,b.example.org"]`
+- THEN the file is rejected
 
 #### Scenario: Two entries claim one hostname
 - WHEN entries for `main` and `develop` both declare `example.org`, as a hostname or an alias

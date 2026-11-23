@@ -51,11 +51,11 @@ public static class ComposeImages
     }
 
     /// <summary>
-    /// The commits whose images this deployment may delete: its own, older
-    /// than its newest <paramref name="keep"/>, and not one that another
-    /// deployment keeps. Each of the others arrives already cut down to what
-    /// its own `images.keep` says, since two branches can declare different
-    /// numbers. A torn-down deployment keeps none of its own.
+    /// The commits whose images this deployment may delete: every commit it
+    /// built, less the ones it keeps and the ones another deployment keeps.
+    /// Each of the others arrives already cut down to what its own
+    /// `images.keep` says, since two branches can declare different numbers.
+    /// A torn-down deployment keeps none of its own.
     ///
     /// Worked out from deploy history rather than from the tags on disk. Two
     /// branches building one image name share its tags, and a tag does not say
@@ -63,11 +63,13 @@ public static class ComposeImages
     /// delete the images production would roll back to.
     /// </summary>
     public static HashSet<string> Removable(
-        IEnumerable<string> ownCommitsNewestFirst,
-        int keep,
+        IEnumerable<string> ownCommits,
+        IEnumerable<string> keptOwn,
         IEnumerable<IEnumerable<string>> keptByOthers)
     {
-        var removable = ownCommitsNewestFirst.Distinct().Skip(keep).ToHashSet();
+        var removable = ownCommits.ToHashSet();
+
+        removable.ExceptWith(keptOwn);
 
         foreach (var kept in keptByOthers)
             removable.ExceptWith(kept);

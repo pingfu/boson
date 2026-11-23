@@ -13,7 +13,7 @@ Boson runs on your production host and automatically clones your GitHub repos an
 - **Container publishes app on a single port.** Caddy proxies to it.
 - **One server.** GitHub webhooks post to one hostname per repo.
 - **Outages during deployment.** Boson restarts the containers.
-- **App data in a Docker volume.** Every deploy wipes the last checkout.
+- **App data in a Docker volume.** Every deploy resets the checkout's tracked files, and a purge deletes it.
 - **Secrets can be stored on the server.** Under `/var/lib/boson/env/`.
 - **Images in public registries, or built on the server.** Private registries need a one-off `docker login`.
 - **Nobody else has a shell.** Boson stores its GitHub credentials unencrypted.
@@ -78,7 +78,7 @@ install -m 755 /tmp/boson /usr/local/bin/boson
 boson init deploy.example.com        # boson's own hostname
 ```
 
-`deploy.example.com` is boson's own hostname, resolving to this server. You use it to check the platform and to add projects. GitHub never connects to it, so a private name works too (`boson.enclave`), at the cost of a browser warning: Caddy issues that one itself, since a public CA won't.
+`deploy.example.com` is boson's own hostname, resolving to this server. You use it to check the platform and to add projects. GitHub's servers do not connect to it once a project's webhook has moved to the project's own hostname, which `boson add` does for any `_boson.yml` that names a branch outright. So a private name works too (`boson.enclave`), at the cost of a browser warning: Caddy issues that one itself, since a public CA won't.
 
 Every project you add brings a second kind of hostname, its own public one, and that is where GitHub delivers its webhooks. Those need public A records pointing at this server, with ports 80 and 443 free on the host and reachable from the internet.
 
@@ -210,7 +210,7 @@ boson uninstall               # remove the platform
 
 Run every command as root: the CLI manages the platform's user, systemd unit and data directories, and the daemon's socket admits only root and the `boson` user.
 
-Exit codes: `0` success, `1` user error, `2` runtime failure, `3` deploy already running, `99` internal bug (file an issue).
+Exit codes: `0` success, `1` user error or an error boson did not expect (it prints a stack trace), `2` runtime failure, `3` the daemon refused the deploy as it stands (one is already running for that branch, or the project has several branches and needs `--branch`) or another `init`/`uninstall` is running.
 
 `https://deploy.example.com/_boson/health` returns the running version. When it doesn't answer, `systemctl status boson` says why.
 
@@ -246,7 +246,7 @@ Keep a copy off-host. Everything else is rebuildable: checkouts come back from G
 ## Remove a project
 
 ```bash
-boson remove <org/name>           # stop every branch's containers, drop routing, keep the record
+boson remove <org/name>           # stop every branch's containers, drop routing, erase the App key, keep the record
 boson remove <org/name> --purge   # also delete the record and /srv/<org>/<name>
 ```
 
