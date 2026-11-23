@@ -86,8 +86,15 @@ public static class StatusCommand
             return ExitCodes.Success;
         }
 
-        AnsiConsole.MarkupLine($"boson version   [grey]{Markup.Escape(DescribeDaemon(daemon, now, latest))}[/]");
-        AnsiConsole.MarkupLine($"admin url       [grey]{Markup.Escape(AdminUrl(adminHostname))}[/]");
+        // Labels bold white and values light yellow, so the two header lines
+        // read at the same weight as the table under them. The update notice
+        // takes a colour of its own because it is the one thing to act on.
+        var update = UpdateNotice(daemon, latest) is { } notice ? $" [green]{Markup.Escape(notice)}[/]" : "";
+
+        AnsiConsole.MarkupLine(
+            $"[bold white]Boson version[/]   [khaki1]{Markup.Escape(DescribeDaemon(daemon, now))}[/]{update}");
+        AnsiConsole.MarkupLine(
+            $"[bold white]Admin url[/]       [khaki1]{Markup.Escape(AdminUrl(adminHostname))}[/]");
         AnsiConsole.WriteLine();
 
         if (rows.Count == 0)
@@ -234,7 +241,11 @@ public static class StatusCommand
         return Parse(latest) is { } l && Parse(running) is { } r && l > r;
     }
 
-    internal static string DescribeDaemon(DaemonInfo? daemon, DateTimeOffset now, string? latest = null)
+    /// <summary>What to say about a newer release, or null when there is nothing to say.</summary>
+    internal static string? UpdateNotice(DaemonInfo? daemon, string? latest) =>
+        daemon?.Version is { } running && IsNewer(latest, running) ? $"({latest} available)" : null;
+
+    internal static string DescribeDaemon(DaemonInfo? daemon, DateTimeOffset now)
     {
         if (daemon?.Version is null)
             return "not responding — diagnose with: systemctl status boson";
@@ -249,9 +260,6 @@ public static class StatusCommand
         if (daemon.Version != VersionInfo.Version)
             text += $" — this binary is {ShortenVersion(VersionInfo.Version)}, " +
                     "finish the upgrade with: systemctl restart boson";
-
-        if (IsNewer(latest, daemon.Version))
-            text += $" ({latest} available)";
 
         return text;
     }

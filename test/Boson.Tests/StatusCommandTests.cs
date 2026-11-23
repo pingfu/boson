@@ -73,9 +73,15 @@ public class StatusCommandTests
     private static StatusCommand.DaemonInfo Running(string version) => new(version, Now.AddHours(-3));
 
     [Fact]
-    public void A_newer_release_is_named_at_the_end_of_the_line()
+    public void A_newer_release_is_named()
     {
-        Assert.EndsWith("(0.1.41 available)", StatusCommand.DescribeDaemon(Running("0.1.40+97e9eb4"), Now, "0.1.41"));
+        Assert.Equal("(0.1.41 available)", StatusCommand.UpdateNotice(Running("0.1.40+97e9eb4"), "0.1.41"));
+    }
+
+    [Fact]
+    public void A_silent_daemon_has_no_version_to_compare()
+    {
+        Assert.Null(StatusCommand.UpdateNotice(null, "0.1.41"));
     }
 
     [Theory]
@@ -86,7 +92,7 @@ public class StatusCommandTests
     public void Nothing_is_said_about_updates_when_there_is_none_to_name(string? latest)
     {
         // Null is GitHub not answering inside two seconds.
-        Assert.DoesNotContain("available", StatusCommand.DescribeDaemon(Running("0.1.40+97e9eb4"), Now, latest));
+        Assert.Null(StatusCommand.UpdateNotice(Running("0.1.40+97e9eb4"), latest));
     }
 
     [Theory]

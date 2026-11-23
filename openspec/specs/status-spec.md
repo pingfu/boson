@@ -20,7 +20,7 @@ The system SHALL also ask `https://api.github.com/repos/pingfu/boson/releases/la
 - THEN the command exits 1, as [storage](storage-spec.md) specifies
 
 ### Requirement: Daemon line
-The system SHALL print the daemon's state on the `boson version` line and the admin hostname as `https://<admin-hostname>` on the `admin url` line.
+The system SHALL print the daemon's state on the `Boson version` line and the admin hostname as `https://<admin-hostname>` on the `Admin url` line. On a terminal with colour, the two labels are bold white, their values light yellow, and the notice of a newer release green.
 
 #### Scenario: Daemon running
 - WHEN the health endpoint answers
